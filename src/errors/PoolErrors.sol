@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+error Pool__InvalidTokenAddress();
+error Pool__InvalidUserAddress();
+error Pool__WrongAsset();
+error Pool__InvalidAPY();
+error Pool__InvalidMinPeriod();
+error Pool__NoPoolDepositsFound();
+error Pool__DepositNotActive();
+error Pool__DepositPeriodStillActive();
+error Pool_IndexOutOfBounds();
+error Pool__PoolInactiveOrNonExistent();
+error Pool__InvalidDepositType();
+error Pool__PeriodTooShort();
+error Pool__InvalidPoolAsset();
+error Pool__AlreadyDeposited();
+error Pool_InvalidAmount();
+error Pool__InvalidValue();
+error Pool__SendFailed();
+error BQ_GovernanceAlreadySet();
+error BQ_InvalidGovernanceAddress();
+error BQ_CoverAlreadySet();
+error BQ_InvalidCoverAddress();
+error BQ_VaultAlreadySet();
+error BQ_InvalidVaultAddress();
+error BQ_PoolCanisterAlreadySet();
+error BQ_InvalidPoolCanisterAddress();
+error BQ_NotGovernance();
+error BQ_NotCover();
+error BQ_NotVault();
+error BQ_NotPoolCanister();
