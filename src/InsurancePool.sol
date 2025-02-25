@@ -153,11 +153,12 @@ contract InsurancePool is ReentrancyGuard, Ownable {
     }
 
     function createPool(CoverLib.PoolParams memory params) public onlyOwner {
-        require(
-            params.adt == CoverLib.AssetDepositType.Native ||
-                params.asset != address(0),
-            "Wrong Asset for Deposit"
-        );
+        if (
+            params.adt != CoverLib.AssetDepositType.Native &&
+            params.asset == address(0)
+        ) {
+            revert BQ_InvalidAssetForDeposit();
+        }
 
         poolCount += 1;
         CoverLib.Pool storage newPool = pools[params.poolId];
@@ -185,9 +186,15 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         uint256 _apy,
         uint256 _minPeriod
     ) public onlyOwner {
-        require(pools[_poolId].isActive, "Pool does not exist or is inactive");
-        require(_apy > 0, "Invalid APY");
-        require(_minPeriod > 0, "Invalid minimum period");
+        if (!pools[_poolId].isActive) {
+            revert Pool__PoolInactiveOrNonExistent();
+        }
+        if (_apy <= 0) {
+            revert Pool__InvalidAPY();
+        }
+        if (_minPeriod <= 0) {
+            revert Pool__InvalidMinPeriod();
+        }
 
         pools[_poolId].apy = _apy;
         pools[_poolId].minPeriod = _minPeriod;
@@ -210,7 +217,9 @@ contract InsurancePool is ReentrancyGuard, Ownable {
     }
 
     function deactivatePool(uint256 _poolId) public onlyOwner {
-        require(pools[_poolId].isActive, "Pool is not active");
+        if (!pools[_poolId].isActive) {
+            revert Pool__PoolInactiveOrNonExistent();
+        }
         pools[_poolId].isActive = false;
     }
 
@@ -287,7 +296,10 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         CoverLib.PoolInfo[] memory result = new CoverLib.PoolInfo[](
             resultCount
         );
-        require(resultCount > 0, "No pools found for address");
+
+        if resultCount == 0 {
+            revert Pool__NoPoolDepositsFound();
+        }
 
         uint256 resultIndex = 0;
 
@@ -296,7 +308,10 @@ contract InsurancePool is ReentrancyGuard, Ownable {
                 deposits[_userAddress][i][CoverLib.DepositType.Normal].amount >
                 0
             ) {
-                require(resultIndex < resultCount, "Index out of bounds");
+                if resultIndex >= resultCount {
+                    revert Pool_IndexOutOfBounds();
+                }
+
                 CoverLib.Pool memory pool = pools[i];
                 CoverLib.Deposits memory userDeposit = deposits[_userAddress][
                     i
@@ -333,15 +348,17 @@ contract InsurancePool is ReentrancyGuard, Ownable {
             CoverLib.DepositType.Normal
         ];
 
-        require(userDeposit.amount > 0, "No deposit found for this address");
-        require(
-            userDeposit.status == CoverLib.Status.Active,
-            "Deposit is not active"
-        );
-        require(
-            block.timestamp >= userDeposit.expiryDate,
-            "Deposit period has not ended"
-        );
+        if (userDeposit.amount == 0) {
+            revert Pool__NoPoolDepositsFound();
+        }
+
+        if (userDeposit.status != CoverLib.Status.Active) {
+            revert Pool__DepositNotActive();
+        }
+
+        if (block.timestamp < userDeposit.expiryDate) {
+            revert Pool__DepositPeriodStillActive();
+        }
 
         userDeposit.status = CoverLib.Status.Withdrawn;
         selectedPool.totalUnit -= userDeposit.amount;
@@ -356,17 +373,6 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         for (uint i = 0; i < poolCovers.length; i++) {
             ICoverContract.updateMaxAmount(poolCovers[i].id);
         }
-
-        // if (selectedPool.assetType == CoverLib.AssetDepositType.ERC20) {
-        //     bool success = IERC20(selectedPool.asset).transfer(
-        //         msg.sender,
-        //         userDeposit.amount
-        //     );
-        //     require(success, "ERC20 transfer failed");
-        // } else {
-        //     (bool success, ) = msg.sender.call{value: userDeposit.amount}("");
-        //     require(success, "Native asset transfer failed");
-        // }
 
         bqBTC.burn(msg.sender, userDeposit.amount);
 
@@ -383,15 +389,17 @@ contract InsurancePool is ReentrancyGuard, Ownable {
             pdt
         ];
 
-        require(userDeposit.amount > 0, "No deposit found for this address");
-        require(
-            userDeposit.status == CoverLib.Status.Active,
-            "Deposit is not active"
-        );
-        require(
-            block.timestamp >= userDeposit.expiryDate,
-            "Deposit period has not ended"
-        );
+        if (userDeposit.amount == 0) {
+            revert Pool__NoPoolDepositsFound();
+        }
+
+        if (userDeposit.status != CoverLib.Status.Active) {
+            revert Pool__DepositNotActive();
+        }
+
+        if (block.timestamp < userDeposit.expiryDate) {
+            revert Pool__DepositPeriodStillActive();
+        }
 
         userDeposit.status = CoverLib.Status.Due;
         selectedPool.tvl -= userDeposit.amount;
@@ -409,57 +417,37 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         emit Withdraw(depositor, userDeposit.amount, selectedPool.poolName);
     }
 
-    // function vaultWithdraw(uint256 _vaultId) public nonReentrant {
-    //     IVault.VaultDeposit memory userVaultDeposit = IVaultContract
-    //         .getUserVaultDeposit(_vaultId, msg.sender);
-    //     require(userVaultDeposit.amount > 0, "No active withdrawal for user");
-    //     IVault.Vault memory vault = IVaultContract.getVault(_vaultId);
-    //     CoverLib.AssetDepositType adt = vault.assetType;
-    //     if (adt == CoverLib.AssetDepositType.ERC20) {
-    //         bool success = IERC20(vault.asset).transfer(
-    //             msg.sender,
-    //             userVaultDeposit.amount
-    //         );
-    //         require(success, "ERC20 transfer failed");
-    //     } else {
-    //         (bool success, ) = msg.sender.call{value: userVaultDeposit.amount}(
-    //             ""
-    //         );
-    //         require(success, "Native asset transfer failed");
-    //     }
-
-    //     IVaultContract.setUserVaultDepositToZero(_vaultId, msg.sender);
-    // }
-
     function deposit(
         CoverLib.DepositParams memory depositParam
     ) public payable nonReentrant returns (uint256, uint256) {
         CoverLib.Pool storage selectedPool = pools[depositParam.poolId];
 
-        require(selectedPool.isActive, "Pool is inactive or does not exist");
-        require(
-            selectedPool.assetType == depositParam.adt,
-            "Pool does not accept this deposit type"
-        );
-        require(
-            depositParam.period >= selectedPool.minPeriod,
-            "Period too short"
-        );
-        require(
-            selectedPool.asset == depositParam.asset,
-            "Pool does not accept this asset"
-        );
-        require(
-            deposits[depositParam.depositor][depositParam.poolId][
-                depositParam.pdt
-            ].amount == 0,
-            "User has already deposited into this pool"
-        );
+        if (!selectedPool.isActive) {
+            revert Pool__PoolInactiveOrNonExistent();
+        }
+
+        if (selectedPool.assetType != depositParam.adt) {
+            revert Pool__InvalidDepositType();
+        }
+
+        if (depositParam.period < selectedPool.minPeriod) {
+            revert Pool__PeriodTooShort();
+        }
+
+        if (selectedPool.asset != depositParam.asset) {
+            revert Pool__InvalidPoolAsset();
+        }
+
+        if (deposits[depositParam.depositor][depositParam.poolId][depositParam.pdt].amount > 0) {
+            revert Pool__AlreadyDeposited();
+        }
 
         uint256 price;
 
         if (selectedPool.assetType == CoverLib.AssetDepositType.ERC20) {
-            require(depositParam.amount > 0, "Amount must be greater than 0");
+            if (depositParam.amount <= 0) {
+                revert Pool__InvalidAmount();
+            }
             IERC20(depositParam.asset).transferFrom(
                 depositParam.depositor,
                 poolCanister,
@@ -468,9 +456,13 @@ contract InsurancePool is ReentrancyGuard, Ownable {
             selectedPool.totalUnit += depositParam.amount;
             price = depositParam.amount;
         } else {
-            require(msg.value > 0, "Deposit cannot be zero");
+            if (msg.value <= 0) {
+                revert Pool__InvalidValue();
+            }
             (bool sent, ) = payable(poolCanister).call{value: msg.value}("");
-            require(sent, "Failed to send Ether to poolCanister");
+            if (!sent) {
+                revert Pool__SendFailed();
+            }
 
             selectedPool.totalUnit += msg.value;
             price = msg.value;
@@ -661,72 +653,61 @@ contract InsurancePool is ReentrancyGuard, Ownable {
     }
 
     function setGovernance(address _governance) external onlyOwner {
-        require(governance == address(0), "Governance already set");
-        require(_governance != address(0), "Governance address cannot be zero");
+        if (governance != address(0)) revert Pool__GovernanceAlreadySet();
+        if (_governance == address(0)) revert Pool__InvalidGovernanceAddress();
+        
         governance = _governance;
         IGovernanceContract = IGov(_governance);
     }
 
     function setCover(address _coverContract) external onlyOwner {
-        require(coverContract == address(0), "Cover already set");
-        require(_coverContract != address(0), "Cover address cannot be zero");
+        if (coverContract != address(0)) revert Pool__CoverAlreadySet();
+        if (_coverContract == address(0)) revert Pool__InvalidCoverAddress();
+        
         ICoverContract = ICover(_coverContract);
         coverContract = _coverContract;
     }
 
     function setVault(address _vaultContract) external onlyOwner {
-        require(vaultContract == address(0), "Vault already set");
-        require(_vaultContract != address(0), "Vault address cannot be zero");
+        if (vaultContract != address(0)) revert Pool__VaultAlreadySet();
+        if (_vaultContract == address(0)) revert Pool__InvalidVaultAddress();
+        
         IVaultContract = IVault(_vaultContract);
         vaultContract = _vaultContract;
     }
 
     function setPoolCanister(address _poolcanister) external onlyOwner {
-        require(poolCanister == address(0), "Pool Canister already set");
-        require(
-            _poolcanister != address(0),
-            "Pool Canister address cannot be zero"
-        );
+        if (poolCanister != address(0)) revert Pool__PoolCanisterAlreadySet();
+        if (_poolcanister == address(0)) revert Pool__InvalidPoolCanisterAddress();
+        
         poolCanister = _poolcanister;
     }
 
     function updatePoolCanister(address _poolcanister) external onlyOwner {
-        require(
-            _poolcanister != address(0),
-            "Pool Canister address cannot be zero"
-        );
+        if (_poolcanister == address(0)) revert Pool__InvalidPoolCanisterAddress();
+        
         poolCanister = _poolcanister;
     }
 
+
     modifier onlyGovernance() {
-        require(
-            msg.sender == governance || msg.sender == initialOwner,
-            "Caller is not the governance contract"
-        );
+        if (msg.sender != governance && msg.sender != initialOwner) revert Pool__NotGovernance();
         _;
     }
 
     modifier onlyCover() {
-        require(
-            msg.sender == coverContract || msg.sender == initialOwner,
-            "Caller is not the cover contract"
-        );
+        if (msg.sender != coverContract && msg.sender != initialOwner) revert Pool__NotCover();
         _;
     }
 
     modifier onlyVault() {
-        require(
-            msg.sender == vaultContract || msg.sender == initialOwner,
-            "Caller is not the vault contract"
-        );
+        if (msg.sender != vaultContract && msg.sender != initialOwner) revert Pool__NotVault();
         _;
     }
 
     modifier onlyPoolCanister() {
-        require(
-            msg.sender == poolCanister || msg.sender == initialOwner,
-            "Caller is not the pool canister"
-        );
+        if (msg.sender != poolCanister && msg.sender != initialOwner) revert Pool__NotPoolCanister();
         _;
     }
+
 }

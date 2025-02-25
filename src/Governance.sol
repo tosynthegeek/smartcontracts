@@ -5,6 +5,7 @@ import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/access/Ownable2Step.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import "./CoverLib.sol";
+import "../errors/GovErrors.sol";
 
 interface ILP {
     struct Deposits {
@@ -45,8 +46,6 @@ interface ICover {
 }
 
 contract Governance is ReentrancyGuard, Ownable2Step {
-    error VotingTimeElapsed();
-    error CannotCreateProposalForThisCoverNow();
     struct Proposal {
         uint256 id;
         uint256 votesFor;
@@ -141,12 +140,15 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     function createProposal(ProposalParams memory params) external {
         CoverLib.GenericCoverInfo memory userCover = ICoverContract
             .getUserCoverInfo(params.user, params.coverId);
-        require(
-            params.claimAmount <= userCover.coverValue,
-            "Not sufficient cover value for claim"
-        );
-        require(lpContract.poolActive(params.poolId), "Pool does not exist");
-        require(params.claimAmount > 0, "Claim amount must be greater than 0");
+        if params.claimAmount > userCover.coverValue {
+            revert Gov__InsufficientCoverValue();
+        }
+        if lpContract.poolActive(params.poolId) == false {
+            revert Gov__PoolDoesNotExist();
+        }
+        if params.claimAmount <= 0 {
+            revert Gov__InvalidClaimAmount();
+        }
 
         proposalCounter++;
 
@@ -160,7 +162,7 @@ contract Governance is ReentrancyGuard, Ownable2Step {
                 proposal.status != ProposalStaus.Claimed &&
                 proposal.status != ProposalStaus.Rejected
             ) {
-                revert CannotCreateProposalForThisCoverNow();
+                revert Gov__CannotCreateProposalForThisCoverNow();
             }
         }
 
@@ -202,13 +204,16 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     }
 
     function vote(uint256 _proposalId, bool _vote) external {
-        require(!voters[_proposalId][msg.sender].voted, "Already voted");
+        if (voters[_proposalId][msg.sender].voted) {
+            revert Gov__AlreadyVoted();
+        }
         Proposal storage proposal = proposals[_proposalId];
-        require(proposal.createdAt != 0, "Proposal does not exist");
-        require(
-            msg.sender != proposal.proposalParam.user,
-            "You cant vote on your own proposal"
-        );
+        if (proposal.createdAt == 0) {
+            rever Gov__ProposalDoesNotExist();
+        }
+        if (msg.sender == proposal.proposalParam.user) {
+            revert Gov__CannotVoteOnOwnProposal();
+        }
 
         if (proposal.status == ProposalStaus.Submitted) {
             proposal.status = ProposalStaus.Pending;
@@ -216,12 +221,14 @@ contract Governance is ReentrancyGuard, Ownable2Step {
             proposal.timeleft = (proposal.deadline - block.timestamp) / 1 days;
         } else if (block.timestamp >= proposal.deadline) {
             proposal.timeleft = 0;
-            revert VotingTimeElapsed();
+            revert Gov__VotingTimeElapsed();
         }
 
         proposal.timeleft = (proposal.deadline - block.timestamp) / 1 days;
         uint256 voterWeight = governanceToken.balanceOf(msg.sender);
-        require(voterWeight > 0, "No voting weight");
+        if (voterWeight <= 0) {
+            revert Gov__NoVotingWeight();
+        }
 
         voters[_proposalId][msg.sender] = Voter({
             voted: true,
@@ -297,16 +304,20 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     function updateProposalStatusToClaimed(
         uint256 proposalId
     ) public nonReentrant {
-        require(
-            msg.sender == proposals[proposalId].proposalParam.user ||
-                msg.sender == poolContract,
-            "Not the valid proposer"
-        );
+        if (
+            msg.sender != proposals[proposalId].proposalParam.user &&
+            msg.sender != poolContract
+        ) {
+            revert Gov__NotValidProposer();
+        }
+
         proposals[proposalId].status = ProposalStaus.Claimed;
     }
 
     function setVotingDuration(uint256 _newDuration) external onlyOwner {
-        require(_newDuration > 0, "Voting duration must be greater than 0");
+        if (_newDuration <= 0) {
+            revert Gov__InvalidVotingDuration();
+        }
         votingDuration = _newDuration;
     }
 
@@ -412,22 +423,28 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     }
 
     function setCoverContract(address _coverContract) external onlyOwner {
-        require(coverContract == address(0), "Governance already set");
-        require(
-            _coverContract != address(0),
-            "Governance address cannot be zero"
-        );
+        if (coverContract != address(0)) {
+            revert Gov__GovernanceAlreadySet();
+        }
+        if (_coverContract == address(0)) {
+            revert Gov__InvalidGovernanceAddress();
+        }
+
         ICoverContract = ICover(_coverContract);
         coverContract = _coverContract;
     }
 
     function safeTransferOwnership(address newOwner) public onlyOwner {
-        require(newOwner != address(0), "New owner cannot be the zero address");
+        if (newOwner == address(0)) {
+            revert Gov__InvalidNewOwner();
+        }
         transferOwnership(newOwner);
     }
 
     function updateRewardAmount(uint256 numberofTokens) public onlyAdmin {
-        require(numberofTokens > 0);
+        if numberofTokens <= 0 {
+            revert Gov__InvalidRewardAmount();
+        }
         REWARD_AMOUNT = numberofTokens * 10 ** 18;
     }
 
@@ -436,7 +453,9 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     }
 
     modifier onlyAdmin() {
-        require(isAdmin[msg.sender], "Not authorized");
+        if (!isAdmin[msg.sender]) {
+            revert Gov__NotAuthorized();
+        }
         _;
     }
 }

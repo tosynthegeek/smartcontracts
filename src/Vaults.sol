@@ -5,6 +5,7 @@ import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import "openzeppelin-contracts/access/Ownable.sol";
 import "./CoverLib.sol";
+import "../errors/VaultErrors.sol";
 
 interface ICover {
     function updateMaxAmount(uint256 _coverId) external;
@@ -168,14 +169,12 @@ contract Vaults is ReentrancyGuard, Ownable {
         CoverLib.AssetDepositType adt,
         address asset
     ) public onlyOwner {
-        require(
-            _poolIds.length == poolPercentageSplit.length,
-            "Mismatched pool IDs and percentages"
-        );
-        require(
-            adt == CoverLib.AssetDepositType.Native || asset != address(0),
-            "Invalid asset for deposit type"
-        );
+        if (_poolIds.length != poolPercentageSplit.length) {
+            revert Vault__MismatchedPoolIdsAndPercentages();
+        }
+        if (adt != CoverLib.AssetDepositType.Native && asset == address(0)) {
+            revert Vault__InvalidAssetForDepositType();
+        }
 
         vaultCount += 1;
         Vault storage vault = vaults[vaultCount];
@@ -193,31 +192,25 @@ contract Vaults is ReentrancyGuard, Ownable {
             adt
         );
 
-        require(
-            _minPeriod >= minPeriod,
-            "Minimun period must be greater than or equal to the minimum period of all pools within the vault"
-        );
-        vault.minPeriod = _minPeriod;
+        if (_minPeriod < minPeriod) revert Vault__InvalidMinPeriod();
 
-        require(percentageSplit == 100, "Total split must equal 100%");
+        if (percentageSplit != 100) revert Vault__InvalidPercentageSplit();
+
+        vault.minPeriod = _minPeriod;
     }
 
     function initialVaultWithdraw(uint256 _vaultId) public nonReentrant {
         VaultDeposit storage userVaultDeposit = userVaultDeposits[msg.sender][
             _vaultId
         ];
-        require(
-            userVaultDeposit.amount > 0,
-            "No deposit found for this address"
-        );
-        require(
-            userVaultDeposit.status == CoverLib.Status.Active,
-            "Deposit is not active"
-        );
-        require(
-            block.timestamp >= userVaultDeposit.expiryDate,
-            "Deposit period has not ended"
-        );
+        if (userVaultDeposit.amount == 0) revert Vault__NoDepositFound();
+
+        if (userVaultDeposit.status != CoverLib.Status.Active)
+            revert Vault__InactiveDeposit();
+
+        if (block.timestamp < userVaultDeposit.expiryDate)
+            revert Vault__DepositPeriodStillActive();
+
         Vault memory vault = vaults[_vaultId];
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
@@ -240,10 +233,8 @@ contract Vaults is ReentrancyGuard, Ownable {
         uint256 _period
     ) public payable nonReentrant {
         Vault memory vault = vaults[_vaultId];
-        require(
-            _period >= vault.minPeriod,
-            "Period cannot be less than the vault min period"
-        );
+        if (_period < vault.minPeriod) revert BQ_PeriodTooShort();
+
         uint256 totalDailyPayout = 0;
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < vault.pools.length; i++) {
@@ -276,8 +267,7 @@ contract Vaults is ReentrancyGuard, Ownable {
             status: CoverLib.Status.Active,
             daysLeft: _period,
             startDate: block.timestamp,
-            expiryDate: block.timestamp + (_period * 1 seconds),
-            // expiryDate: block.timestamp + (_period * 1 days), change. uncomment for production.
+            expiryDate: block.timestamp + (_period * 1 days),
             accruedPayout: 0,
             assetType: vault.assetType,
             asset: vault.asset
@@ -295,7 +285,8 @@ contract Vaults is ReentrancyGuard, Ownable {
         minPeriod = 365;
         for (uint256 i = 0; i < _poolIds.length; i++) {
             CoverLib.Pool memory pool = IPoolContract.getPool(_poolIds[i]);
-            require(pool.assetType == adt, "Incompatible asset type in pool");
+            if (pool.assetType != adt) revert BQ_IncompatibleAssetType();
+
             percentageSplit += poolPercentageSplit[i];
             vaultPercentageSplits[vault.id][_poolIds[i]] = poolPercentageSplit[
                 i
@@ -359,72 +350,64 @@ contract Vaults is ReentrancyGuard, Ownable {
     }
 
     function setGovernance(address _governance) external onlyOwner {
-        require(governance == address(0), "Governance already set");
-        require(_governance != address(0), "Governance address cannot be zero");
+        if (governance != address(0)) revert Vault__GovernanceAlreadySet();
+        if (_governance == address(0)) revert Vault__InvalidGovernanceAddress();
+
         governance = _governance;
         IGovernanceContract = IGov(_governance);
     }
 
     function setCover(address _coverContract) external onlyOwner {
-        require(coverContract == address(0), "Cover already set");
-        require(_coverContract != address(0), "Cover address cannot be zero");
+        if (coverContract != address(0)) revert Vault__CoverAlreadySet();
+        if (_coverContract == address(0)) revert Vault__InvalidCoverAddress();
+
         ICoverContract = ICover(_coverContract);
         coverContract = _coverContract;
     }
 
-    function setPool(address _poolcontract) external onlyOwner {
-        require(poolContract == address(0), "Pool already set");
-        require(_poolcontract != address(0), "Pool address cannot be zero");
-        IPoolContract = IPool(_poolcontract);
-        poolContract = _poolcontract;
+    function setPool(address _poolContract) external onlyOwner {
+        if (poolContract != address(0)) revert Vault__PoolAlreadySet();
+        if (_poolContract == address(0)) revert Vault__InvalidPoolAddress();
+
+        IPoolContract = IPool(_poolContract);
+        poolContract = _poolContract;
     }
 
-    function setPoolCanister(address _poolcanister) external onlyOwner {
-        require(poolCanister == address(0), "Pool Canister already set");
-        require(
-            _poolcanister != address(0),
-            "Pool Canister address cannot be zero"
-        );
-        poolCanister = _poolcanister;
+    function setPoolCanister(address _poolCanister) external onlyOwner {
+        if (poolCanister != address(0)) revert Vault__PoolCanisterAlreadySet();
+        if (_poolCanister == address(0))
+            revert Vault__InvalidPoolCanisterAddress();
+
+        poolCanister = _poolCanister;
     }
 
-    function updatePoolCanister(address _poolcanister) external onlyOwner {
-        require(
-            _poolcanister != address(0),
-            "Pool Canister address cannot be zero"
-        );
-        poolCanister = _poolcanister;
+    function updatePoolCanister(address _poolCanister) external onlyOwner {
+        if (_poolCanister == address(0))
+            revert Vault__InvalidPoolCanisterAddress();
+        poolCanister = _poolCanister;
     }
 
     modifier onlyGovernance() {
-        require(
-            msg.sender == governance || msg.sender == initialOwner,
-            "Caller is not the governance contract"
-        );
+        if (msg.sender != governance && msg.sender != initialOwner)
+            revert Vault__NotGovernance();
         _;
     }
 
     modifier onlyCover() {
-        require(
-            msg.sender == coverContract || msg.sender == initialOwner,
-            "Caller is not the cover contract"
-        );
+        if (msg.sender != coverContract && msg.sender != initialOwner)
+            revert Vault__NotCover();
         _;
     }
 
     modifier onlyPool() {
-        require(
-            msg.sender == poolContract || msg.sender == initialOwner,
-            "Caller is not the pool contract"
-        );
+        if (msg.sender != poolContract && msg.sender != initialOwner)
+            revert Vault__NotPool();
         _;
     }
 
     modifier onlyPoolCanister() {
-        require(
-            msg.sender == poolCanister || msg.sender == initialOwner,
-            "Caller is not the pool canister"
-        );
+        if (msg.sender != poolCanister && msg.sender != initialOwner)
+            revert Vault__NotPoolCanister();
         _;
     }
 }

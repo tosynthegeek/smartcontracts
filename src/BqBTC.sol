@@ -5,6 +5,7 @@ import "openzeppelin-contracts/token/ERC20/ERC20.sol";
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
 import "openzeppelin-contracts/access/Ownable.sol";
+import "../errors/BQErrors.sol";
 
 contract BqBTC is ERC20, Ownable {
     using SafeERC20 for IERC20;
@@ -24,8 +25,6 @@ contract BqBTC is ERC20, Ownable {
         bool native
     );
 
-    error BQ_InvalidTokenAddress(type name );
-
     constructor(
         string memory name,
         string memory symbol,
@@ -35,11 +34,12 @@ contract BqBTC is ERC20, Ownable {
         address _alternativeToken,
         uint256 _multiplier
     ) ERC20(name, symbol) Ownable(_initialOwner) {
-        require(
-            _multiplier > 0 && _multiplier < 1100,
-            "Multiplier must be greater than zero"
-        );
-        require(_alternativeToken != address(0), "Invalid token address");
+        if (_multiplier <= 0 || _multiplier >= 1100) {
+            revert BQ__InvalidMultiplier();
+        }
+        if (_alternativeToken == address(0)) {
+            revert BQ__InvalidTokenAddress();
+        }
         _customDecimals = decimals_;
         _mint(msg.sender, initialSupply);
         initialOwner = _initialOwner;
@@ -55,8 +55,12 @@ contract BqBTC is ERC20, Ownable {
         uint256 currentChainId = block.chainid;
         uint256 networkMultiplier = networkMultipliers[currentChainId];
 
-        require(networkMultiplier > 0, "No multiplier for this network");
-        require(account != address(0), "Invalid account address");
+        if (networkMultiplier <= 0) {
+            revert BQ__NoNetworkMultiplier();
+        }
+        if (account == address(0)) {
+            revert BQ__InvalidUserAddress();
+        }
 
         bool nativeSent = msg.value > 0;
         bool btcSent = false;
@@ -68,7 +72,9 @@ contract BqBTC is ERC20, Ownable {
 
         if (!nativeSent) {
             mintAmount = (btcAmount * networkMultiplier) / 1 ether;
-            require(btcAmount > 0, "amount must be greater than 0");
+            if (btcAmount <= 0) {
+                revert BQ__InvalidAmount();
+            }
             alternativeToken.safeTransferFrom(
                 msg.sender,
                 address(this),
@@ -77,19 +83,24 @@ contract BqBTC is ERC20, Ownable {
             btcSent = true;
         }
 
-        require(nativeSent || btcSent, "Insufficient tokens sent to mint");
+        if (!nativeSent && !btcSent) {
+            revert BQ__InsufficientTokensSent();
+        }
+
         _mint(account, mintAmount);
 
         emit Mint(account, mintAmount, currentChainId, nativeSent);
     }
 
     function burn(address account, uint256 amount) external {
-        require(
-            msg.sender == initialOwner ||
-                msg.sender == poolAddress ||
-                msg.sender == coverAddress,
-            "not authorized to call he function"
-        );
+        if (
+            msg.sender != initialOwner &&
+            msg.sender != poolAddress &&
+            msg.sender != coverAddress
+        ) {
+            revert BQ__NotAuthorized();
+        }
+
         _burn(account, amount);
     }
 
@@ -135,16 +146,17 @@ contract BqBTC is ERC20, Ownable {
         address cover,
         address vault
     ) public onlyOwner {
-        require(
-            pool != address(0) && cover != address(0) && vault != address(0),
-            "Address cant be empty"
-        );
-        require(
-            poolAddress == address(0) &&
-                coverAddress == address(0) &&
-                vaultContract == address(0),
-            "Pool address already set"
-        );
+        if (pool == address(0) || cover == address(0) || vault == address(0)) {
+            revert BQ__InvalidAddress();
+        }
+
+        if (
+            poolAddress != address(0) ||
+            coverAddress != address(0) ||
+            vaultContract != address(0)
+        ) {
+            revert BQ__PoolAlreadySet();
+        }
 
         coverAddress = cover;
         poolAddress = pool;
@@ -155,21 +167,23 @@ contract BqBTC is ERC20, Ownable {
         uint256 chainId,
         uint256 multiplier
     ) external onlyOwner {
-        require(
-            multiplier > 0 && multiplier < 1100,
-            "Multiplier must be greater than zero"
-        );
+        if (multiplier <= 0 || multiplier >= 1100) {
+            revert BQ__InvalidMultiplier();
+        }
+
         networkMultipliers[chainId] = multiplier;
     }
 
     modifier onlyBQContracts() {
-        require(
-            msg.sender == coverAddress ||
-                msg.sender == initialOwner ||
-                msg.sender == vaultContract ||
-                msg.sender == poolAddress,
-            "Caller is not the governance contract"
-        );
+        if (
+            msg.sender != coverAddress &&
+            msg.sender != initialOwner &&
+            msg.sender != vaultContract &&
+            msg.sender != poolAddress
+        ) {
+            revert BQ__NotGovernance();
+        }
+
         _;
     }
 }

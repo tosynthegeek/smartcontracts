@@ -6,6 +6,7 @@ import "openzeppelin-contracts/access/Ownable.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import "openzeppelin-contracts/utils/math/Math.sol";
 import "./CoverLib.sol";
+import "../errors/CoverErrors.sol";
 
 interface IbqBTC {
     function bqMint(address account, uint256 amount) external;
@@ -84,17 +85,6 @@ interface ILP {
 contract InsuranceCover is ReentrancyGuard, Ownable {
     using CoverLib for *;
     using Math for uint256;
-
-    error LpNotActive();
-    error InsufficientPoolBalance();
-    error NoClaimableReward();
-    error InvalidCoverDuration();
-    error CoverNotAvailable();
-    error UserHaveAlreadyPurchasedCover();
-    error NameAlreadyExists();
-    error InvalidAmount();
-    error UnsupportedCoverType();
-    error WrongPool();
 
     uint public coverFeeBalance;
     ILP public lpContract;
@@ -201,7 +191,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
                 keccak256(abi.encodePacked(coversInPool[i].coverName)) ==
                 keccak256(abi.encodePacked(_coverName))
             ) {
-                revert NameAlreadyExists();
+                revert Cover__NameAlreadyExists();
             }
         }
         CoverLib.Pool memory pool = lpContract.getPool(poolId);
@@ -209,7 +199,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         if (
             pool.riskType != riskType || capacity > pool.percentageSplitBalance
         ) {
-            revert WrongPool();
+            revert Cover__WrongPool();
         }
 
         uint256 maxAmount = (pool.tvl * capacity) / 100;
@@ -231,7 +221,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
             pool.riskType != _riskType ||
             _capacity > pool.percentageSplitBalance
         ) {
-            revert WrongPool();
+            revert Cover__WrongPool();
         }
 
         CoverLib.Cover storage cover = covers[_coverId];
@@ -239,7 +229,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         uint256 _maxAmount = (pool.tvl * ((_capacity * 1e18) / 100)) / 1e18;
 
         if (cover.coverValues > _maxAmount) {
-            revert WrongPool();
+            revert Cover__WrongPool();
         }
 
         CoverLib.Cover[] memory coversInPool = lpContract.getPoolCovers(
@@ -251,7 +241,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
                 keccak256(abi.encodePacked(_coverName)) &&
                 coversInPool[i].id != _coverId
             ) {
-                revert NameAlreadyExists();
+                revert Cover__NameAlreadyExists();
             }
         }
 
@@ -285,25 +275,25 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         uint256 _coverFee
     ) public nonReentrant {
         if (_coverFee <= 0) {
-            revert InvalidAmount();
+            revert Cover__InvalidAmount();
         }
         if (_coverPeriod <= 27 || _coverPeriod >= 366) {
             revert InvalidCoverDuration();
         }
         if (!coverExists[_coverId]) {
-            revert CoverNotAvailable();
+            revert Cover__CoverNotAvailable();
         }
 
         CoverLib.Cover storage cover = covers[_coverId];
 
         if (_coverValue > cover.maxAmount) {
-            revert InsufficientPoolBalance();
+            revert Cover__InsufficientPoolBalance();
         }
 
         uint256 newCoverValues = cover.coverValues + _coverValue;
 
         if (newCoverValues > cover.capacityAmount) {
-            revert InsufficientPoolBalance();
+            revert Cover__InsufficientPoolBalance();
         }
 
         bqBTC.burn(msg.sender, _coverFee);
@@ -329,7 +319,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
                 isActive: true
             });
         } else {
-            revert UserHaveAlreadyPurchasedCover();
+            revert Cover__UserHaveAlreadyPurchasedCover();
         }
 
         bool userExists = false;
@@ -445,7 +435,9 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
     function updateMaxAmount(uint256 _coverId) public onlyPool nonReentrant {
         CoverLib.Cover storage cover = covers[_coverId];
         CoverLib.Pool memory pool = lpContract.getPool(cover.poolId);
-        require(cover.capacity > 0, "Invalid cover capacity");
+        if cover.capacity <= 0 {
+            revert Cover__InvalidCoverCapacity();
+        }
         uint256 amount = (pool.totalUnit * cover.capacity) / 100;
         covers[_coverId].capacityAmount = amount;
         covers[_coverId].maxAmount = (covers[_coverId].capacityAmount -
@@ -458,7 +450,7 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
             msg.sender
         );
         if (depositInfo.status != CoverLib.Status.Active) {
-            revert LpNotActive();
+            revert Cover__LpNotActive();
         }
 
         uint256 lastClaimTime;
@@ -476,12 +468,12 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         uint256 claimableDays = (currentTime - lastClaimTime) / 1 days;
 
         if (claimableDays <= 0) {
-            revert NoClaimableReward();
+            revert Cover__NoClaimableReward();
         }
         uint256 claimableAmount = depositInfo.dailyPayout * claimableDays;
 
         if (claimableAmount > coverFeeBalance) {
-            revert InsufficientPoolBalance();
+            revert Cover__InsufficientPoolBalance();
         }
         NextLpClaimTime[msg.sender][_poolId] = block.timestamp;
 
@@ -563,12 +555,16 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
     }
 
     modifier onlyGovernance() {
-        require(msg.sender == governance, "Not authorized");
+        if msg.sender != governance {
+            revert Cover__NotAuthorized();
+        }
         _;
     }
 
     modifier onlyPool() {
-        require(msg.sender == lpAddress, "Not authorized");
+        if msg.sender != lpAddress {
+            revert Cover__NotAuthorized();
+        }
         _;
     }
 }
