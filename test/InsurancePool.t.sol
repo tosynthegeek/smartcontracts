@@ -2,14 +2,15 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Counter} from "../src/Counter.sol";
+import {Deploy} from "../script/Deploy.s.sol";
+import "../src/InsurancePool.sol" as InsurancePool;
 
-contract CounterTest is Test {
-    Counter public counter;
+contract InsurancePoolTest is Test {
+    InsurancePool public insurancePool;
 
     function setUp() public {
-        counter = new Counter();
-        counter.setNumber(0);
+        Deploy deploy = new Deploy();
+        (, insurancePool, , , , ) = deploy.run();
     }
 
     function test_Increment() public {
