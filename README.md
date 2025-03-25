@@ -67,4 +67,4 @@ $ cast --help
 
 # TODOs
 
-Name errors using custom revert errors with Contract name in front and 2 \*\*. eg Pool\_\_NotOwner()
+- Refactor storage variables, constants, sload, and sstore
