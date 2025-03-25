@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-error Vault__MismatchedPoolIdsAndPercentages(type name );
-error Vault__InvalidAssetForDepositType(type name );
+error Vault__MismatchedPoolIdsAndPercentages();
+error Vault__InvalidAssetForDepositType();
 error Vault__InvalidMinPeriod();
 error Vault__InvalidPercentageSplit();
 error Vault__NoDepositFound();
@@ -23,6 +23,3 @@ error Vault__NotGovernance();
 error Vault__NotCover();
 error Vault__NotPool();
 error Vault__NotPoolCanister();
-
-
-
