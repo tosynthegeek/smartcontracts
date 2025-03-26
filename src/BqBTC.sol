@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/token/ERC20/ERC20.sol";
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
@@ -18,12 +18,7 @@ contract BqBTC is ERC20, Ownable {
     IERC20 public alternativeToken; // 0x6ce8da28e2f864420840cf74474eff5fd80e65b8
     address vaultContract;
 
-    event Mint(
-        address indexed account,
-        uint256 amount,
-        uint256 chainId,
-        bool native
-    );
+    event Mint(address indexed account, uint256 amount, uint256 chainId, bool native);
 
     constructor(
         string memory name,
@@ -75,11 +70,7 @@ contract BqBTC is ERC20, Ownable {
             if (btcAmount <= 0) {
                 revert BQ__InvalidAmount();
             }
-            alternativeToken.safeTransferFrom(
-                msg.sender,
-                address(this),
-                btcAmount
-            );
+            alternativeToken.safeTransferFrom(msg.sender, address(this), btcAmount);
             btcSent = true;
         }
 
@@ -93,20 +84,14 @@ contract BqBTC is ERC20, Ownable {
     }
 
     function burn(address account, uint256 amount) external {
-        if (
-            msg.sender != initialOwner &&
-            msg.sender != poolAddress &&
-            msg.sender != coverAddress
-        ) {
+        if (msg.sender != initialOwner && msg.sender != poolAddress && msg.sender != coverAddress) {
             revert BQ__NotAuthorized();
         }
 
         _burn(account, amount);
     }
 
-    function balanceOf(
-        address account
-    ) public view virtual override returns (uint256) {
+    function balanceOf(address account) public view virtual override returns (uint256) {
         return super.balanceOf(account);
     }
 
@@ -119,42 +104,24 @@ contract BqBTC is ERC20, Ownable {
         _mint(account, amount);
     }
 
-    function transfer(
-        address to,
-        uint256 amount
-    ) public virtual override returns (bool) {
+    function transfer(address to, uint256 amount) public virtual override returns (bool) {
         return super.transfer(to, amount);
     }
 
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public virtual override returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) public virtual override returns (bool) {
         return super.transferFrom(from, to, amount);
     }
 
-    function approve(
-        address spender,
-        uint256 amount
-    ) public virtual override returns (bool) {
+    function approve(address spender, uint256 amount) public virtual override returns (bool) {
         return super.approve(spender, amount);
     }
 
-    function setContracts(
-        address pool,
-        address cover,
-        address vault
-    ) public onlyOwner {
+    function setContracts(address pool, address cover, address vault) public onlyOwner {
         if (pool == address(0) || cover == address(0) || vault == address(0)) {
             revert BQ__InvalidAddress();
         }
 
-        if (
-            poolAddress != address(0) ||
-            coverAddress != address(0) ||
-            vaultContract != address(0)
-        ) {
+        if (poolAddress != address(0) || coverAddress != address(0) || vaultContract != address(0)) {
             revert BQ__PoolAlreadySet();
         }
 
@@ -163,10 +130,7 @@ contract BqBTC is ERC20, Ownable {
         vaultContract = vault;
     }
 
-    function setNetworkMultiplier(
-        uint256 chainId,
-        uint256 multiplier
-    ) external onlyOwner {
+    function setNetworkMultiplier(uint256 chainId, uint256 multiplier) external onlyOwner {
         if (multiplier <= 0 || multiplier >= 1100) {
             revert BQ__InvalidMultiplier();
         }
@@ -176,10 +140,8 @@ contract BqBTC is ERC20, Ownable {
 
     modifier onlyBQContracts() {
         if (
-            msg.sender != coverAddress &&
-            msg.sender != initialOwner &&
-            msg.sender != vaultContract &&
-            msg.sender != poolAddress
+            msg.sender != coverAddress && msg.sender != initialOwner && msg.sender != vaultContract
+                && msg.sender != poolAddress
         ) {
             revert BQ__NotGovernance();
         }
