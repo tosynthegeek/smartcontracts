@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/access/Ownable2Step.sol";
@@ -8,23 +8,6 @@ import "./CoverLib.sol";
 import "./errors/GovErrors.sol";
 
 interface ILP {
-    struct Deposits {
-        address lp;
-        uint256 amount;
-        uint256 poolId;
-        uint256 dailyPayout;
-        Status status;
-        uint256 daysLeft;
-        uint256 startDate;
-        uint256 expiryDate;
-        uint256 accruedPayout;
-    }
-
-    enum Status {
-        Active,
-        Expired
-    }
-
     function poolActive(uint256 poolId) external view returns (bool);
 }
 
@@ -42,44 +25,6 @@ interface ICover {
 }
 
 contract Governance is ReentrancyGuard, Ownable2Step {
-    struct Proposal {
-        uint256 id;
-        uint256 votesFor;
-        uint256 votesAgainst;
-        uint256 createdAt;
-        uint256 deadline;
-        uint256 timeleft;
-        ProposalStaus status;
-        bool executed;
-        ProposalParams proposalParam;
-    }
-
-    struct Voter {
-        bool voted;
-        bool vote;
-        uint256 weight;
-    }
-
-    struct ProposalParams {
-        address user;
-        CoverLib.RiskType riskType;
-        uint256 coverId;
-        string txHash;
-        string description;
-        uint256 poolId;
-        uint256 claimAmount;
-        CoverLib.AssetDepositType adt;
-        address asset;
-    }
-
-    enum ProposalStaus {
-        Submitted,
-        Pending,
-        Approved,
-        Claimed,
-        Rejected
-    }
-
     uint256 public proposalCounter;
     uint256 public votingDuration;
     uint256 public REWARD_AMOUNT = 100 * 10 ** 18;

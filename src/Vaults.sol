@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
@@ -29,85 +29,17 @@ interface IPool {
 }
 
 interface IGov {
-    struct ProposalParams {
-        address user;
-        CoverLib.RiskType riskType;
-        uint256 coverId;
-        string txHash;
-        string description;
-        uint256 poolId;
-        uint256 claimAmount;
-    }
-
-    struct Proposal {
-        uint256 id;
-        uint256 votesFor;
-        uint256 votesAgainst;
-        uint256 createdAt;
-        uint256 deadline;
-        uint256 timeleft;
-        ProposalStaus status;
-        bool executed;
-        ProposalParams proposalParam;
-    }
-
-    enum ProposalStaus {
-        Submitted,
-        Pending,
-        Approved,
-        Claimed,
-        Rejected
-    }
-
-    function getProposalDetails(uint256 _proposalId) external returns (Proposal memory);
+    function getProposalDetails(uint256 _proposalId) external returns (CoverLib.Proposal memory);
     function updateProposalStatusToClaimed(uint256 proposalId) external;
 }
 
 contract Vaults is ReentrancyGuard, Ownable {
     using CoverLib for *;
 
-    struct Vault {
-        uint256 id;
-        string vaultName;
-        CoverLib.Pool[] pools;
-        uint256 minInv;
-        uint256 maxInv;
-        uint256 minPeriod;
-        CoverLib.AssetDepositType assetType;
-        address asset;
-    }
-
-    struct VaultDeposit {
-        address lp;
-        uint256 amount;
-        uint256 vaultId;
-        uint256 dailyPayout;
-        CoverLib.Status status;
-        uint256 daysLeft;
-        uint256 startDate;
-        uint256 expiryDate;
-        uint256 accruedPayout;
-        CoverLib.AssetDepositType assetType;
-        address asset;
-    }
-
-    struct PoolInfo {
-        string poolName;
-        uint256 poolId;
-        uint256 dailyPayout;
-        uint256 depositAmount;
-        uint256 apy;
-        uint256 minPeriod;
-        uint256 tvl;
-        uint256 tcp; // Total claim paid to users
-        bool isActive; // Pool status to handle soft deletion
-        uint256 accruedPayout;
-    }
-
     mapping(uint256 => mapping(uint256 => uint256)) vaultPercentageSplits; //vault id to pool id to the pool percentage split;
     mapping(uint256 => Vault) vaults;
     mapping(address => mapping(uint256 => mapping(CoverLib.DepositType => CoverLib.Deposits))) deposits;
-    mapping(address => mapping(uint256 => VaultDeposit)) userVaultDeposits;
+    mapping(address => mapping(uint256 => CoverLib.VaultDeposit)) userVaultDeposits;
     uint256 public vaultCount;
     address public governance;
     ICover public ICoverContract;

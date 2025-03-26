@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/token/ERC20/ERC20.sol";
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import "openzeppelin-contracts/access/Ownable.sol";
+import "aave-v3-core/contracts/interfaces/IPool.sol";
 import "./CoverLib.sol";
 import "./errors/PoolErrors.sol";
 
@@ -15,51 +16,8 @@ interface ICover {
 }
 
 interface IVault {
-    struct Pool {
-        uint256 id;
-        string poolName;
-        CoverLib.RiskType riskType;
-        uint256 apy;
-        uint256 minPeriod;
-        uint256 tvl;
-        uint256 baseValue;
-        uint256 coverUnits;
-        uint256 tcp;
-        bool isActive;
-        uint256 percentageSplitBalance;
-        uint256 investmentArmPercent;
-        uint8 leverage;
-        address asset;
-        CoverLib.AssetDepositType assetType;
-    }
-
-    struct Vault {
-        uint256 id;
-        string vaultName;
-        Pool[] pools;
-        uint256 minInv;
-        uint256 maxInv;
-        uint256 minPeriod;
-        CoverLib.AssetDepositType assetType;
-        address asset;
-    }
-
-    struct VaultDeposit {
-        address lp;
-        uint256 amount;
-        uint256 vaultId;
-        uint256 dailyPayout;
-        CoverLib.Status status;
-        uint256 daysLeft;
-        uint256 startDate;
-        uint256 expiryDate;
-        uint256 accruedPayout;
-        CoverLib.AssetDepositType assetType;
-        address asset;
-    }
-
     function getVault(uint256 vaultId) external view returns (Vault memory);
-    function getUserVaultDeposit(uint256 vaultId, address user) external view returns (VaultDeposit memory);
+    function getUserVaultDeposit(uint256 vaultId, address user) external view returns (CoverLib.VaultDeposit memory);
     function setUserVaultDepositToZero(uint256 vaultId, address user) external;
 }
 
@@ -70,36 +28,6 @@ interface IbqBTC {
 }
 
 interface IGov {
-    struct ProposalParams {
-        address user;
-        CoverLib.RiskType riskType;
-        uint256 coverId;
-        string txHash;
-        string description;
-        uint256 poolId;
-        uint256 claimAmount;
-    }
-
-    struct Proposal {
-        uint256 id;
-        uint256 votesFor;
-        uint256 votesAgainst;
-        uint256 createdAt;
-        uint256 deadline;
-        uint256 timeleft;
-        ProposalStaus status;
-        bool executed;
-        ProposalParams proposalParam;
-    }
-
-    enum ProposalStaus {
-        Submitted,
-        Pending,
-        Approved,
-        Claimed,
-        Rejected
-    }
-
     function getProposalDetails(uint256 _proposalId) external returns (Proposal memory);
     function updateProposalStatusToClaimed(uint256 proposalId) external;
     function setUserVaultDepositToZero(uint256 vaultId, address user) external;
@@ -111,19 +39,24 @@ contract InsurancePool is ReentrancyGuard, Ownable {
     mapping(address => mapping(uint256 => mapping(CoverLib.DepositType => CoverLib.Deposits))) deposits;
     mapping(uint256 => CoverLib.Cover[]) poolToCovers;
     mapping(uint256 => CoverLib.Pool) public pools;
+    mapping(address => uint256) public participation;
+
     uint256 public poolCount;
-    address public governance;
+    uint16 private referralCode = 0;
+
     ICover public ICoverContract;
     IVault public IVaultContract;
     IGov public IGovernanceContract;
     IbqBTC public bqBTC;
+    IPool public AavePool;
+
+    address public governance;
     address public bqBTCAddress;
     address public coverContract;
     address public vaultContract;
     address public poolCanister;
     address public initialOwner;
     address[] public participants;
-    mapping(address => uint256) public participation;
 
     event Deposited(address indexed user, uint256 amount, string pool);
     event Withdraw(address indexed user, uint256 amount, string pool);
@@ -132,10 +65,11 @@ contract InsurancePool is ReentrancyGuard, Ownable {
     event PoolUpdated(uint256 indexed poolId, uint256 apy, uint256 _minPeriod);
     event ClaimAttempt(uint256, uint256, address);
 
-    constructor(address _initialOwner, address bq) Ownable(_initialOwner) {
+    constructor(address _initialOwner, address bq, address _aavePoolAdress) Ownable(_initialOwner) {
         initialOwner = _initialOwner;
         bqBTC = IbqBTC(bq);
         bqBTCAddress = bq;
+        AavePool = IPool(_aavePoolAdress);
     }
 
     function createPool(CoverLib.PoolParams memory params) public onlyOwner {
@@ -196,36 +130,6 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         pools[_poolId].isActive = false;
     }
 
-    function getPool(uint256 _poolId) public view returns (CoverLib.Pool memory) {
-        return pools[_poolId];
-    }
-
-    function getAllPools() public view returns (CoverLib.Pool[] memory) {
-        CoverLib.Pool[] memory result = new CoverLib.Pool[](poolCount);
-        for (uint256 i = 1; i <= poolCount; i++) {
-            CoverLib.Pool memory pool = pools[i];
-            result[i - 1] = CoverLib.Pool({
-                id: i,
-                poolName: pool.poolName,
-                riskType: pool.riskType,
-                apy: pool.apy,
-                minPeriod: pool.minPeriod,
-                totalUnit: pool.totalUnit,
-                tvl: pool.tvl,
-                baseValue: pool.baseValue,
-                coverUnits: pool.coverUnits,
-                tcp: pool.tcp,
-                isActive: pool.isActive,
-                percentageSplitBalance: pool.percentageSplitBalance,
-                investmentArmPercent: pool.investmentArmPercent,
-                leverage: pool.leverage,
-                asset: pool.asset,
-                assetType: pool.assetType
-            });
-        }
-        return result;
-    }
-
     function updatePoolCovers(uint256 _poolId, CoverLib.Cover memory _cover) public onlyCover {
         for (uint256 i = 0; i < poolToCovers[_poolId].length; i++) {
             if (poolToCovers[_poolId][i].id == _cover.id) {
@@ -233,57 +137,6 @@ contract InsurancePool is ReentrancyGuard, Ownable {
                 break;
             }
         }
-    }
-
-    function addPoolCover(uint256 _poolId, CoverLib.Cover memory _cover) public onlyCover {
-        poolToCovers[_poolId].push(_cover);
-    }
-
-    function getPoolCovers(uint256 _poolId) public view returns (CoverLib.Cover[] memory) {
-        return poolToCovers[_poolId];
-    }
-
-    function getPoolsByAddress(address _userAddress) public view returns (CoverLib.PoolInfo[] memory) {
-        uint256 resultCount = 0;
-        for (uint256 i = 1; i <= poolCount; i++) {
-            if (deposits[_userAddress][i][CoverLib.DepositType.Normal].amount > 0) {
-                resultCount++;
-            }
-        }
-
-        CoverLib.PoolInfo[] memory result = new CoverLib.PoolInfo[](resultCount);
-
-        if (resultCount == 0) {
-            revert Pool__NoPoolDepositsFound();
-        }
-
-        uint256 resultIndex = 0;
-
-        for (uint256 i = 1; i <= poolCount; i++) {
-            if (deposits[_userAddress][i][CoverLib.DepositType.Normal].amount > 0) {
-                if (resultIndex >= resultCount) {
-                    revert Pool__IndexOutOfBounds();
-                }
-
-                CoverLib.Pool memory pool = pools[i];
-                CoverLib.Deposits memory userDeposit = deposits[_userAddress][i][CoverLib.DepositType.Normal];
-                uint256 claimableDays = ICoverContract.getDepositClaimableDays(_userAddress, i);
-                uint256 accruedPayout = userDeposit.dailyPayout * claimableDays;
-                result[resultIndex++] = CoverLib.PoolInfo({
-                    poolName: pool.poolName,
-                    poolId: i,
-                    dailyPayout: deposits[_userAddress][i][CoverLib.DepositType.Normal].dailyPayout,
-                    depositAmount: deposits[_userAddress][i][CoverLib.DepositType.Normal].amount,
-                    apy: pool.apy,
-                    minPeriod: pool.minPeriod,
-                    totalUnit: pool.totalUnit,
-                    tcp: pool.tcp,
-                    isActive: pool.isActive,
-                    accruedPayout: accruedPayout
-                });
-            }
-        }
-        return result;
     }
 
     function poolWithdraw(uint256 _poolId) public nonReentrant {
@@ -389,18 +242,27 @@ contract InsurancePool is ReentrancyGuard, Ownable {
             if (depositParam.amount <= 0) {
                 revert Pool__InvalidAmount();
             }
-            IERC20(depositParam.asset).transferFrom(depositParam.depositor, poolCanister, depositParam.amount);
+            uint256 externalDepositAmount = (selectedPool.investmentArmPercent / 100) * depositParam.amount;
+            uintt256 internalDepositAmount = depositParam.amount - externalDepositAmount;
+            IERC20(depositParam.asset).transferFrom(depositParam.depositor, address(this), depositParam.amount);
+            AavePool.supply(deposit.asset, externalDepositAmount, depositParam.depositor, referralCode);
             selectedPool.totalUnit += depositParam.amount;
             price = depositParam.amount;
         } else {
             if (msg.value <= 0) {
                 revert Pool__InvalidValue();
             }
-            (bool sent,) = payable(poolCanister).call{value: msg.value}("");
+
+            uint256 externalDepositAmount = (selectedPool.investmentArmPercent / 100) * depositParam.amount;
+            uintt256 internalDepositAmount = depositParam.amount - externalDepositAmount;
+
+            (bool sent,) = payable(address(this)).call{value: msg.value}("");
             if (!sent) {
                 revert Pool__SendFailed();
             }
 
+            IERC20(depositParam.asset).transferFrom(depositParam.depositor, address(this), depositParam.amount);
+            AavePool.supply(deposit.asset, externalDepositAmount, depositParam.depositor, referralCode);
             selectedPool.totalUnit += msg.value;
             price = msg.value;
         }
@@ -473,6 +335,87 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         IGovernanceContract.updateProposalStatusToClaimed(_proposalId);
 
         emit ClaimPaid(user, pool.poolName, proposalParam.claimAmount);
+    }
+
+    function addPoolCover(uint256 _poolId, CoverLib.Cover memory _cover) public onlyCover {
+        poolToCovers[_poolId].push(_cover);
+    }
+
+    function getPool(uint256 _poolId) public view returns (CoverLib.Pool memory) {
+        return pools[_poolId];
+    }
+
+    function getAllPools() public view returns (CoverLib.Pool[] memory) {
+        CoverLib.Pool[] memory result = new CoverLib.Pool[](poolCount);
+        for (uint256 i = 1; i <= poolCount; i++) {
+            CoverLib.Pool memory pool = pools[i];
+            result[i - 1] = CoverLib.Pool({
+                id: i,
+                poolName: pool.poolName,
+                riskType: pool.riskType,
+                apy: pool.apy,
+                minPeriod: pool.minPeriod,
+                totalUnit: pool.totalUnit,
+                tvl: pool.tvl,
+                baseValue: pool.baseValue,
+                coverUnits: pool.coverUnits,
+                tcp: pool.tcp,
+                isActive: pool.isActive,
+                percentageSplitBalance: pool.percentageSplitBalance,
+                investmentArmPercent: pool.investmentArmPercent,
+                leverage: pool.leverage,
+                asset: pool.asset,
+                assetType: pool.assetType
+            });
+        }
+        return result;
+    }
+
+    function getPoolCovers(uint256 _poolId) public view returns (CoverLib.Cover[] memory) {
+        return poolToCovers[_poolId];
+    }
+
+    function getPoolsByAddress(address _userAddress) public view returns (CoverLib.PoolInfo[] memory) {
+        uint256 resultCount = 0;
+        for (uint256 i = 1; i <= poolCount; i++) {
+            if (deposits[_userAddress][i][CoverLib.DepositType.Normal].amount > 0) {
+                resultCount++;
+            }
+        }
+
+        CoverLib.PoolInfo[] memory result = new CoverLib.PoolInfo[](resultCount);
+
+        if (resultCount == 0) {
+            revert Pool__NoPoolDepositsFound();
+        }
+
+        uint256 resultIndex = 0;
+
+        for (uint256 i = 1; i <= poolCount; i++) {
+            if (deposits[_userAddress][i][CoverLib.DepositType.Normal].amount > 0) {
+                if (resultIndex >= resultCount) {
+                    revert Pool__IndexOutOfBounds();
+                }
+
+                CoverLib.Pool memory pool = pools[i];
+                CoverLib.Deposits memory userDeposit = deposits[_userAddress][i][CoverLib.DepositType.Normal];
+                uint256 claimableDays = ICoverContract.getDepositClaimableDays(_userAddress, i);
+                uint256 accruedPayout = userDeposit.dailyPayout * claimableDays;
+                result[resultIndex++] = CoverLib.PoolInfo({
+                    poolName: pool.poolName,
+                    poolId: i,
+                    dailyPayout: deposits[_userAddress][i][CoverLib.DepositType.Normal].dailyPayout,
+                    depositAmount: deposits[_userAddress][i][CoverLib.DepositType.Normal].amount,
+                    apy: pool.apy,
+                    minPeriod: pool.minPeriod,
+                    totalUnit: pool.totalUnit,
+                    tcp: pool.tcp,
+                    isActive: pool.isActive,
+                    accruedPayout: accruedPayout
+                });
+            }
+        }
+        return result;
     }
 
     function getUserPoolDeposit(uint256 _poolId, address _user) public view returns (CoverLib.Deposits memory) {
@@ -565,6 +508,10 @@ contract InsurancePool is ReentrancyGuard, Ownable {
 
     function getUserParticipation(address user) public view returns (uint256) {
         return participation[user];
+    }
+
+    function setReferralCode(uint16 _referralCode) public onlyOwner {
+        referralCode = _referralCode;
     }
 
     function setGovernance(address _governance) external onlyOwner {

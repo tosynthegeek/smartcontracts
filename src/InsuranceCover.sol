@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/access/Ownable.sol";
@@ -15,34 +15,6 @@ interface IbqBTC {
 }
 
 interface ILP {
-    struct Pool {
-        uint256 id;
-        string poolName;
-        CoverLib.RiskType riskType;
-        uint256 apy;
-        uint256 minPeriod;
-        uint256 tvl;
-        uint256 baseValue;
-        uint256 coverTvl;
-        uint256 tcp;
-        bool isActive;
-        uint256 percentageSplitBalance;
-        uint256 investmentArmPercent;
-        uint8 leverage;
-        address asset;
-        AssetDepositType assetType;
-    }
-
-    enum Status {
-        Active,
-        Expired
-    }
-
-    enum AssetDepositType {
-        Native,
-        ERC20
-    }
-
     function getUserPoolDeposit(uint256 _poolId, address _user) external view returns (CoverLib.Deposits memory);
 
     function getUserVaultPoolDeposits(uint256 vaultId, address user)
