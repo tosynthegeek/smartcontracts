@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 error BQ__InvalidTokenAddress();
 error BQ__InvalidUserAddress();
