@@ -1,65 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.28;
 
 library CoverLib {
-    struct DepositParams {
-        address depositor;
-        uint256 poolId;
-        uint256 amount;
-        uint256 period;
-        CoverLib.DepositType pdt;
-        CoverLib.AssetDepositType adt;
-        address asset;
-    }
-
-    struct Cover {
-        uint256 id;
-        string coverName;
-        RiskType riskType;
-        string chains;
-        uint256 capacity; // Capacity / percentage assigned to the cover from the pool
-        uint256 capacityAmount; // Total capacity amount based on the balance of the pool
-        uint256 coverValues;
-        uint256 maxAmount; // Max unit of asset available
-        uint256 poolId;
-        string CID;
-        CoverLib.AssetDepositType adt;
-        address asset; // Asset accept for cover, should be same with the pool
-    }
-
-    struct GenericCoverInfo {
-        address user;
-        uint256 coverId;
-        RiskType riskType;
-        string coverName;
-        uint256 coverValue; // This is the value of the cover purchased
-        uint256 claimPaid;
-        uint256 coverPeriod; // This is the period the cover is purchased for in days
-        uint256 endDay; // When the cover expires
-        bool isActive;
-    }
-
-    enum RiskType {
-        Low,
-        Medium,
-        High
-    }
-
-    struct GenericCover {
-        RiskType riskType;
-        bytes coverData;
-    }
-
-    enum AssetDepositType {
-        Native,
-        ERC20
-    }
-
-    enum DepositType {
-        Normal,
-        Vault
-    }
-
+    // Pool
     struct Pool {
         uint256 id;
         string poolName;
@@ -76,7 +19,6 @@ library CoverLib {
         uint256 investmentArmPercent;
         uint8 leverage;
         address asset;
-        CoverLib.AssetDepositType assetType;
     }
 
     struct PoolParams {
@@ -87,7 +29,6 @@ library CoverLib {
         uint256 minPeriod;
         uint8 leverage;
         uint256 investmentArm;
-        CoverLib.AssetDepositType adt;
         address asset;
     }
 
@@ -104,6 +45,15 @@ library CoverLib {
         CoverLib.DepositType pdt; // Vault deposit or normal pool deposit?
     }
 
+    struct DepositParams {
+        address depositor;
+        uint256 poolId;
+        uint256 amount;
+        uint256 period;
+        CoverLib.DepositType pdt;
+        address asset;
+    }
+
     struct GenericDepositDetails {
         address lp;
         uint256 amount;
@@ -115,7 +65,6 @@ library CoverLib {
         uint256 expiryDate;
         uint256 accruedPayout;
         CoverLib.DepositType pdt;
-        CoverLib.AssetDepositType adt;
         address asset; // Vault deposit or normal pool deposit?
     }
 
@@ -127,14 +76,121 @@ library CoverLib {
         uint256 apy;
         uint256 minPeriod;
         uint256 totalUnit;
+        uint256 tvl;
         uint256 tcp; // Total claim paid to users
         bool isActive; // Pool status to handle soft deletion
         uint256 accruedPayout;
+    }
+
+    enum DepositType {
+        Normal,
+        Vault
     }
 
     enum Status {
         Active,
         Due,
         Withdrawn
+    }
+
+    // Cover
+    struct Cover {
+        uint256 id;
+        string coverName;
+        RiskType riskType;
+        string chains;
+        uint256 capacity; // Capacity / percentage assigned to the cover from the pool
+        uint256 capacityAmount; // Total capacity amount based on the balance of the pool
+        uint256 coverValues;
+        uint256 maxAmount; // Max unit of asset available
+        uint256 poolId;
+        string CID;
+        address asset; // Asset accept for cover, should be same with the pool
+    }
+
+    struct GenericCoverInfo {
+        address user;
+        uint256 coverId;
+        RiskType riskType;
+        string coverName;
+        uint256 coverValue; // This is the value of the cover purchased
+        uint256 claimPaid;
+        uint256 coverPeriod; // This is the period the cover is purchased for in days
+        uint256 endDay; // When the cover expires
+        bool isActive;
+    }
+
+    struct GenericCover {
+        RiskType riskType;
+        bytes coverData;
+    }
+
+    // Governance
+    struct ProposalParams {
+        address user;
+        CoverLib.RiskType riskType;
+        uint256 coverId;
+        string txHash;
+        string description;
+        uint256 poolId;
+        uint256 claimAmount;
+        address asset;
+    }
+
+    struct Proposal {
+        uint256 id;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        uint256 createdAt;
+        uint256 deadline;
+        uint256 timeleft;
+        ProposalStaus status;
+        bool executed;
+        ProposalParams proposalParam;
+    }
+
+    struct Voter {
+        bool voted;
+        bool vote;
+        uint256 weight;
+    }
+
+    enum ProposalStaus {
+        Submitted,
+        Pending,
+        Approved,
+        Claimed,
+        Rejected
+    }
+
+    // Vaults
+    struct Vault {
+        uint256 id;
+        string vaultName;
+        CoverLib.Pool[] pools;
+        uint256 minInv;
+        uint256 maxInv;
+        uint256 minPeriod;
+        address asset;
+    }
+
+    struct VaultDeposit {
+        address lp;
+        uint256 amount;
+        uint256 vaultId;
+        uint256 dailyPayout;
+        CoverLib.Status status;
+        uint256 daysLeft;
+        uint256 startDate;
+        uint256 expiryDate;
+        uint256 accruedPayout;
+        address asset;
+    }
+
+    // Generic
+    enum RiskType {
+        Low,
+        Medium,
+        High
     }
 }
