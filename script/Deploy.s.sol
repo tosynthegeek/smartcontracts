@@ -17,10 +17,7 @@ contract DeployScript is Script {
 
     function setUp() public {}
 
-    function run()
-        public
-        returns (InsuranceCover, InsurancePool, Vaults, Governance, BqBTC)
-    {
+    function run() public returns (InsuranceCover, InsurancePool, Vaults, Governance, BqBTC) {
         vm.startBroadcast();
         address OWNER = 0x47C14E2dD82B7Cf0E7426c991225417e4C40Cd19;
         address ALT_TOKEN = 0x73795572FB8c1c737513156ecb8b1Cc9a3f9cA46;
@@ -39,11 +36,11 @@ contract DeployScript is Script {
         address coverAddress = address(insuranceCover);
         console.log("InsuranceCover address: ", coverAddress);
 
-        vaults = new Vaults(OWNER, btcAddress);
+        vaults = new Vaults(OWNER, btcAddress, poolAddress, coverAddress);
         address vaultAddress = address(vaults);
         console.log("Vaults address: ", vaultAddress);
 
-        governance = new Governance(btcAddress, poolAddress, 2, OWNER);
+        governance = new Governance(btcAddress, poolAddress, vaultAddress, 2, OWNER);
         address governanceAddress = address(governance);
         console.log("Governance address: ", governanceAddress);
 
