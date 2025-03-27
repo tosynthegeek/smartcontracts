@@ -9,14 +9,14 @@ library CoverLib {
         CoverLib.RiskType riskType;
         uint256 apy;
         uint256 minPeriod;
-        uint256 totalUnit;
-        uint256 tvl;
-        uint256 baseValue;
-        uint256 coverUnits;
+        uint256 totalUnitProcessed; // Total value that has been passed into the pool (both external and internal)
+        uint256 tvl; // Total value locked of the of asset in the pool (both internal and external)
+        uint256 baseValue; // Internal liquidity after investment allocation
+        uint256 coverUnits; // Max coverage the pool can provide (baseValue * leverage)
         uint256 tcp;
         bool isActive;
-        uint256 percentageSplitBalance;
-        uint256 investmentArmPercent;
+        uint8 percentageSplitBalance;
+        uint8 investmentArmPercent;
         uint8 leverage;
         address asset;
     }
@@ -28,7 +28,7 @@ library CoverLib {
         uint256 apy;
         uint256 minPeriod;
         uint8 leverage;
-        uint256 investmentArm;
+        u8 investmentArm;
         address asset;
     }
 
@@ -168,10 +168,10 @@ library CoverLib {
         uint256 id;
         string vaultName;
         CoverLib.Pool[] pools;
-        uint256 minInv;
-        uint256 maxInv;
         uint256 minPeriod;
+        uint8 investmentArmPercent;
         address asset;
+        bool isActive;
     }
 
     struct VaultDeposit {
