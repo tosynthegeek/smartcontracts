@@ -31,3 +31,4 @@ error Pool__NotGovernance();
 error Pool__NotCover();
 error Pool__NotVault();
 error Pool__NotPoolCanister();
+error Pool__AaveSupplyFailed();
