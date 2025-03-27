@@ -331,15 +331,23 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         return coverFeeBalance;
     }
 
-    function updateMaxAmount(uint256 _coverId) public onlyPool nonReentrant {
-        CoverLib.Cover storage cover = covers[_coverId];
-        CoverLib.Pool memory pool = lpContract.getPool(cover.poolId);
-        if (cover.capacity <= 0) {
-            revert Cover__InvalidCoverCapacity();
+    function updateMaxAmount(uint256 _poolId) external onlyPool nonReentrant {
+        CoverLib.Cover[] calldata _covers = lpContract.getPoolCovers(_poolId);
+        for (uint256 i = 0; i < _covers.length; i++) {
+            CoverLib.Cover memory cover = _covers[i];
+            CoverLib.Pool memory pool = lpContract.getPool(cover.poolId);
+            if (cover.capacity <= 0) {
+                revert Cover__InvalidCoverCapacity();
+            }
+            uint256 amount = (pool.coverUnits * _covers[i].capacity) / 100;
+            CoverLib.Cover storage storedCover = covers[cover.id];
+            storedCover.capacityAmount = amount;
+            storedCover.maxAmount = amount - cover.coverValues;
+
+            unchecked {
+                i++;
+            }
         }
-        uint256 amount = (pool.totalUnit * cover.capacity) / 100;
-        covers[_coverId].capacityAmount = amount;
-        covers[_coverId].maxAmount = (covers[_coverId].capacityAmount - covers[_coverId].coverValues);
     }
 
     function claimPayoutForLP(uint256 _poolId) external nonReentrant {
@@ -446,8 +454,8 @@ contract InsuranceCover is ReentrancyGuard, Ownable {
         _;
     }
 
-    modifier onlyPool() {
-        if (msg.sender != lpAddress) {
+    modifier onlyPoolorVault() {
+        if (msg.sender != lpAddress || msg.sender != vaultAddress) {
             revert Cover__NotAuthorized();
         }
         _;
