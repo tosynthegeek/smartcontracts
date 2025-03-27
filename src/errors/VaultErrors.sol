@@ -23,3 +23,5 @@ error Vault__NotGovernance();
 error Vault__NotCover();
 error Vault__NotPool();
 error Vault__NotPoolCanister();
+error Vault__InactiveVault();
+error Vault__AaveSupplyFailed();
