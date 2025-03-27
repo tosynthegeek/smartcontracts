@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import "openzeppelin-contracts/access/Ownable.sol";
+import "aave-v3-core/contracts/interfaces/IPool.sol";
 import "./CoverLib.sol";
 import "./errors/VaultErrors.sol";
 
@@ -19,13 +20,14 @@ interface IbqBTC {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
-interface IPool {
-    function deposit(CoverLib.DepositParams memory depositParam) external payable returns (uint256, uint256);
-
+interface ILP {
     function withdrawUpdate(address depositor, uint256 _poolId, CoverLib.DepositType pdt) external;
     function updateVaultWithdrawToDue(address user, uint256 vaultId, uint256 amount) external;
 
     function getPool(uint256 _poolId) external view returns (CoverLib.Pool memory);
+    function registerVaultDeposits(CoverLib.DepositParams[] calldata _depositParams, uint256[] internalDepositAmounts)
+        external
+        returns (uint256);
 }
 
 interface IGov {
@@ -36,23 +38,27 @@ interface IGov {
 contract Vaults is ReentrancyGuard, Ownable {
     using CoverLib for *;
 
-    mapping(uint256 => mapping(uint256 => uint256)) vaultPercentageSplits; //vault id to pool id to the pool percentage split;
-    mapping(uint256 => Vault) vaults;
-    mapping(address => mapping(uint256 => mapping(CoverLib.DepositType => CoverLib.Deposits))) deposits;
-    mapping(address => mapping(uint256 => CoverLib.VaultDeposit)) userVaultDeposits;
-    uint256 public vaultCount;
-    address public governance;
-    ICover public ICoverContract;
-    IPool public IPoolContract;
-    IGov public IGovernanceContract;
-    IbqBTC public bqBTC;
-    address public poolContract;
-    address public poolCanister;
-    address public bqBTCAddress;
-    address public coverContract;
-    address public initialOwner;
-    address[] public participants;
-    mapping(address => uint256) public participation;
+    mapping(uint256 => Vault) s_vaults;
+    mapping(uint256 => mapping(uint256 => uint256)) s_vaultPercentageSplits; //vault id to pool id to the pool percentage split;
+    mapping(address => mapping(uint256 => mapping(CoverLib.DepositType => CoverLib.Deposits))) s_deposits;
+    mapping(address => mapping(uint256 => CoverLib.VaultDeposit)) s_userVaultDeposits;
+    mapping(address => uint256) private s_participation;
+    address[] private s_participants;
+    address private s_governance;
+
+    uint256 private s_vaultCount;
+    IGov private s_governanceContract;
+    uint16 private s_referralCode = 0;
+
+    ICover private immutable i_coverContract;
+    ILP private immutable i_poolContract;
+    IPool public immutable i_aavePool;
+    IbqBTC private immutable i_bqBTC;
+
+    address private immutable i_poolContractAddress;
+    address private immutable i_bqBTCAddress;
+    address private immutable i_coverContractAddress;
+    address private immutable i_initialOwner;
 
     event Deposited(address indexed user, uint256 amount, string pool);
     event Withdraw(address indexed user, uint256 amount, string pool);
@@ -61,37 +67,41 @@ contract Vaults is ReentrancyGuard, Ownable {
     event PoolUpdated(uint256 indexed poolId, uint256 apy, uint256 _minPeriod);
     event ClaimAttempt(uint256, uint256, address);
 
-    constructor(address _initialOwner, address bq) Ownable(_initialOwner) {
-        initialOwner = _initialOwner;
-        bqBTC = IbqBTC(bq);
-        bqBTCAddress = bq;
+    constructor(address _initialOwner, address bq, address _poolAddress, address _coverAdress, address _aavePoolAdress)
+        Ownable(_initialOwner)
+    {
+        i_initialOwner = _initialOwner;
+        i_bqBTC = IbqBTC(bq);
+        i_bqBTCAddress = bq;
+        i_aavePool = IPool(_aavePoolAdress);
+        i_poolContract = ILP(_poolAddress);
+        i_coverContract = ICover(_coverAdress);
+        i_poolContractAddress = _poolAddress;
+        i_coverContractAddress = _coverAdress;
     }
 
     function createVault(
         string memory _vaultName,
         uint256[] memory _poolIds,
         uint256[] memory poolPercentageSplit,
-        uint256 _minInv,
-        uint256 _maxInv,
         uint256 _minPeriod,
-        CoverLib.AssetDepositType adt,
+        uint8 _investmentArmPercent,
         address asset
     ) public onlyOwner {
         if (_poolIds.length != poolPercentageSplit.length) {
             revert Vault__MismatchedPoolIdsAndPercentages();
         }
-        if (adt != CoverLib.AssetDepositType.Native && asset == address(0)) {
+        if (asset == address(0)) {
             revert Vault__InvalidAssetForDepositType();
         }
 
-        vaultCount += 1;
-        Vault storage vault = vaults[vaultCount];
+        s_vaultCount += 1;
+        Vault storage vault = s_vaults[vaultCount];
         vault.id = vaultCount;
         vault.vaultName = _vaultName;
-        vault.minInv = _minInv;
-        vault.maxInv = _maxInv;
-        vault.assetType = adt;
+        vault.investmentArm = _investmentArmPercent;
         vault.asset = asset;
+        vault.isActive = true;
 
         (uint256 percentageSplit, uint256 minPeriod) = validateAndSetPools(vault, _poolIds, poolPercentageSplit, adt);
 
@@ -102,41 +112,29 @@ contract Vaults is ReentrancyGuard, Ownable {
         vault.minPeriod = _minPeriod;
     }
 
-    function initialVaultWithdraw(uint256 _vaultId) public nonReentrant {
-        VaultDeposit storage userVaultDeposit = userVaultDeposits[msg.sender][_vaultId];
-        if (userVaultDeposit.amount == 0) revert Vault__NoDepositFound();
-
-        if (userVaultDeposit.status != CoverLib.Status.Active) {
-            revert Vault__InactiveDeposit();
-        }
-
-        if (block.timestamp < userVaultDeposit.expiryDate) {
-            revert Vault__DepositPeriodStillActive();
-        }
-
-        Vault memory vault = vaults[_vaultId];
-        for (uint256 i = 0; i < vault.pools.length; i++) {
-            uint256 poolId = vault.pools[i].id;
-            IPoolContract.withdrawUpdate(msg.sender, poolId, CoverLib.DepositType.Vault);
-        }
-
-        userVaultDeposit.status = CoverLib.Status.Due;
-        bqBTC.burn(msg.sender, userVaultDeposit.amount);
-
-        emit Withdraw(msg.sender, userVaultDeposit.amount, vault.vaultName);
-    }
-
-    function vaultDeposit(uint256 _vaultId, uint256 _amount, uint256 _period) public payable nonReentrant {
-        Vault memory vault = vaults[_vaultId];
+    function vaultDeposit(uint256 _vaultId, uint256 _amount, uint256 _period) public nonReentrant {
+        Vault memory vault = s_vaults[_vaultId];
         if (_period < vault.minPeriod) revert Vault__PeriodTooShort();
+        if (!vault.isActive) revert Vault__InactiveVault();
+        if (vault.asset == address(0)) revert Vault__InvalidAssetForDepositType();
+        if (_amount <= 0) revert Vault__AmountTooLow();
 
-        uint256 totalDailyPayout = 0;
-        uint256 totalAmount = 0;
+        uint256 externalDeposit = _amount * vault.investmentArm / 100;
+        uint256 internalDeposit = _amount - externalDeposit;
+
+        IERC20(vault.asset).transferFrom(msg.sender, i_poolContractAddress, internaDeposit);
+        try i_aavePool.supply(vault.asset, externalDepositAmount, msg.sender, s_referralCode) {}
+        catch {
+            revert Vault__AaveSupplyFailed();
+        }
+
+        CoverLib.DepositParams[] memory depositParams = new CoverLib.DepositParams[](vault.pools.length);
+        uint256[] memory internalDepositAmounts = new uint256[](vault.pools.length);
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
             uint256 poolPercentage = vaultPercentageSplits[_vaultId][poolId];
             uint256 percentage_amount = (poolPercentage * _amount) / 100;
-            uint256 value = (msg.value * poolPercentage) / 100;
+            uint256 internal_deposit_percentage = (poolPercentage * internalDeposit) / 100;
             CoverLib.DepositParams memory depositParam = CoverLib.DepositParams({
                 depositor: msg.sender,
                 poolId: poolId,
@@ -146,10 +144,12 @@ contract Vaults is ReentrancyGuard, Ownable {
                 adt: vault.assetType,
                 asset: vault.asset
             });
-            (uint256 amount, uint256 dailyPayout) = IPoolContract.deposit{value: value}(depositParam);
-            totalDailyPayout += dailyPayout;
-            totalAmount += amount;
+
+            depositParams[i] = depositParam;
+            internalDepositAmounts[i] = internal_deposit_percentage;
         }
+
+        uint256 totalDailyPayout = i_poolContract.registerVaultDeposits(depositParams, internalDepositAmounts);
 
         VaultDeposit memory userDeposit = VaultDeposit({
             lp: msg.sender,
@@ -164,40 +164,48 @@ contract Vaults is ReentrancyGuard, Ownable {
             assetType: vault.assetType,
             asset: vault.asset
         });
-        userVaultDeposits[msg.sender][_vaultId] = userDeposit;
+
+        s_userVaultDeposits[msg.sender][_vaultId] = userDeposit;
+        i_bqBTC.bqMint(msg.sender, internalDeposit);
+
         emit Deposited(msg.sender, _amount, vault.vaultName);
     }
 
-    function validateAndSetPools(
-        Vault storage vault,
-        uint256[] memory _poolIds,
-        uint256[] memory poolPercentageSplit,
-        CoverLib.AssetDepositType adt
-    ) internal returns (uint256 percentageSplit, uint256 minPeriod) {
-        minPeriod = 365;
-        for (uint256 i = 0; i < _poolIds.length; i++) {
-            CoverLib.Pool memory pool = IPoolContract.getPool(_poolIds[i]);
-            if (pool.assetType != adt) revert Vault__IncompatibleAssetType();
+    function initialVaultWithdraw(uint256 _vaultId) public nonReentrant {
+        VaultDeposit storage userVaultDeposit = s_userVaultDeposits[msg.sender][_vaultId];
+        if (userVaultDeposit.amount == 0) revert Vault__NoDepositFound();
 
-            percentageSplit += poolPercentageSplit[i];
-            vaultPercentageSplits[vault.id][_poolIds[i]] = poolPercentageSplit[i];
-            vault.pools.push(pool);
-            if (pool.minPeriod < minPeriod) {
-                minPeriod = pool.minPeriod;
-            }
+        if (userVaultDeposit.status != CoverLib.Status.Active) {
+            revert Vault__InactiveDeposit();
         }
+
+        if (block.timestamp < userVaultDeposit.expiryDate) {
+            revert Vault__DepositPeriodStillActive();
+        }
+
+        Vault memory vault = s_vaults[_vaultId];
+        for (uint256 i = 0; i < vault.pools.length; i++) {
+            uint256 poolId = vault.pools[i].id;
+            IPoolContract.withdrawUpdate(msg.sender, poolId, CoverLib.DepositType.Vault);
+        }
+
+        userVaultDeposit.status = CoverLib.Status.Due;
+        bqBTC.burn(msg.sender, userVaultDeposit.amount);
+
+        emit Withdraw(msg.sender, userVaultDeposit.amount, vault.vaultName);
     }
 
     function getVault(uint256 vaultId) public view returns (Vault memory) {
-        return vaults[vaultId];
+        return s_vaults[vaultId];
     }
 
     function getVaultPools(uint256 vaultId) public view returns (CoverLib.Pool[] memory) {
-        return vaults[vaultId].pools;
+        return s_vaults[vaultId].pools;
     }
 
+    //  TODO: Adjust the length of the array to the number of pools in the vault
     function getUserVaultPoolDeposits(uint256 vaultId, address user) public view returns (CoverLib.Deposits[] memory) {
-        Vault memory vault = vaults[vaultId];
+        Vault memory vault = s_vaults[vaultId];
         CoverLib.Deposits[] memory vaultDeposits = new CoverLib.Deposits[](vault.pools.length);
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
@@ -208,28 +216,28 @@ contract Vaults is ReentrancyGuard, Ownable {
     }
 
     function getUserVaultDeposit(uint256 vaultId, address user) public view returns (VaultDeposit memory) {
-        return userVaultDeposits[user][vaultId];
+        return s_userVaultDeposits[user][vaultId];
     }
 
     function setUserVaultDepositToZero(uint256 vaultId, address user) public nonReentrant onlyPoolCanister {
-        userVaultDeposits[user][vaultId].amount = 0;
+        s_userVaultDeposits[user][vaultId].amount = 0;
     }
 
     function getVaults() public view returns (Vault[] memory) {
         Vault[] memory allVaults = new Vault[](vaultCount);
         for (uint256 i = 1; i <= vaultCount; i++) {
-            allVaults[i - 1] = vaults[i];
+            allVaults[i - 1] = s_vaults[i];
         }
 
         return allVaults;
     }
 
     function setGovernance(address _governance) external onlyOwner {
-        if (governance != address(0)) revert Vault__GovernanceAlreadySet();
+        if (s_governance != address(0)) revert Vault__GovernanceAlreadySet();
         if (_governance == address(0)) revert Vault__InvalidGovernanceAddress();
 
-        governance = _governance;
-        IGovernanceContract = IGov(_governance);
+        s_governance = _governance;
+        s_governanceContract = IGov(_governance);
     }
 
     function setCover(address _coverContract) external onlyOwner {
@@ -262,6 +270,26 @@ contract Vaults is ReentrancyGuard, Ownable {
             revert Vault__InvalidPoolCanisterAddress();
         }
         poolCanister = _poolCanister;
+    }
+
+    function validateAndSetPools(
+        Vault storage vault,
+        uint256[] memory _poolIds,
+        uint256[] memory poolPercentageSplit,
+        CoverLib.AssetDepositType adt
+    ) internal returns (uint256 percentageSplit, uint256 minPeriod) {
+        minPeriod = 365;
+        for (uint256 i = 0; i < _poolIds.length; i++) {
+            CoverLib.Pool memory pool = IPoolContract.getPool(_poolIds[i]);
+            if (pool.assetType != adt) revert Vault__IncompatibleAssetType();
+
+            percentageSplit += poolPercentageSplit[i];
+            vaultPercentageSplits[vault.id][_poolIds[i]] = poolPercentageSplit[i];
+            vault.pools.push(pool);
+            if (pool.minPeriod < minPeriod) {
+                minPeriod = pool.minPeriod;
+            }
+        }
     }
 
     modifier onlyGovernance() {
