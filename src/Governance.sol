@@ -55,9 +55,13 @@ contract Governance is ReentrancyGuard, Ownable2Step {
     address public coverContract;
     address public poolContract;
 
-    constructor(address _governanceToken, address _insurancePool, uint256 _votingDuration, address _initialOwner)
-        Ownable(_initialOwner)
-    {
+    constructor(
+        address _governanceToken,
+        address _insurancePool,
+        address _vault,
+        uint256 _votingDuration,
+        address _initialOwner
+    ) Ownable(_initialOwner) {
         governanceToken = IERC20(_governanceToken);
         tokenContract = IGovToken(_governanceToken);
         lpContract = ILP(_insurancePool);
