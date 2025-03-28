@@ -186,24 +186,6 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         emit Deposited(_depositParam.depositor, _depositParam.amount, selectedPool.poolName);
     }
 
-    function registerVaultDeposits(
-        CoverLib.DepositParams[] calldata _deposits,
-        uint256[] calldata internalDepositAmounts
-    ) external nonReentrant onlyVault returns (uint256) {
-        if (_deposits.length != internalDepositAmounts.length) {
-            revert Vault__MismatchedDepositsAndAmounts();
-        }
-
-        uint256 totalDailyPayout = 0;
-
-        for (uint256 i = 0; i < _deposits.length; i++) {
-            uint256 dailyPayout = registerDeposit(_deposits[i], internalDepositAmounts[i]);
-            totalDailyPayout += dailyPayout;
-        }
-
-        return totalDailyPayout;
-    }
-
     // function updatePoolCoverValues(uint256 _poolid) public onlyVaultOrPool {
     //     CoverLib.Cover[] calldata poolCovers = getPoolCovers(_poolId);
     //     s_coverContract.updateMaxAmount(poolCovers);
@@ -225,23 +207,9 @@ contract InsurancePool is ReentrancyGuard, Ownable {
             revert Pool__DepositPeriodStillActive();
         }
 
-        uint256 externalDeposit = (selectedPool.investmentArmPercent * userDeposit.amount) / 100;
-        uint256 internalDeposit = userDeposit.amount - externalDeposit;
-
         i_bqBTC.burn(msg.sender, internaDeposit);
 
-        s_deposits[msg.sender][_poolId][CoverLib.DepositType.Normal].status = CoverLib.Status.Withdrawn;
-        uint256 externalDeposit = (selectedPool.investmentArmPercent * userDeposit.amount) / 100;
-        uint256 internalDeposit = userDeposit.amount - externalDeposit;
-        s_pools[_poolId].tvl -= userDeposit.amount;
-        s_pools[_poolId].baseValue -= internalDeposit;
-        s_pools[_poolId].coverUnits = s_pools[_poolId].baseValue * selectedPool.leverage;
-
-        CoverLib.Cover[] memory poolCovers = getPoolCovers(_poolId);
-        uint256 poolCoverLength = poolCovers.length;
-        for (uint256 i = 0; i < poolCoverLength; i++) {
-            s_coverContract.updateMaxAmount(poolCovers[i].id);
-        }
+        registerWithdrawal(userDeposit, selectedPool);
 
         IERC20(selectedPool.asset).transfer(msg.sender, internalDeposit);
         i_aavePool.withdraw(selectedPool.asset, externalDeposit, msg.sender);
@@ -249,38 +217,42 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         emit Withdraw(msg.sender, userDeposit.amount, selectedPool.poolName);
     }
 
-    function withdrawUpdate(address depositor, uint256 _poolId, CoverLib.DepositType pdt)
+    function vaultWithdrawUpdate(CoverLib.Deposits[] calldata _deposits, CoverLib.Pool[] calldata _pools)
         external
         nonReentrant
         onlyVault
     {
-        CoverLib.Pool memory selectedPool = s_pools[_poolId];
-        CoverLib.Deposits memory userDeposit = s_deposits[depositor][_poolId][pdt];
-
-        if (userDeposit.amount == 0) {
-            revert Pool__NoPoolDepositsFound();
+        if (_deposits.length != _pools.length) {
+            revert Pool__MismatchedDepositsAndPools();
         }
 
-        if (userDeposit.status != CoverLib.Status.Active) {
-            revert Pool__DepositNotActive();
+        uint256 totalInternalAmount = 0;
+        uint256 totalExternalAmount = 0;
+
+        for (uint256 i = 0; i < _deposits.length; i++) {
+            CoverLib.Pool memory selectedPool = _pools[i];
+            CoverLib.Deposits memory userDeposit = _deposits[i];
+
+            if (userDeposit.amount == 0) {
+                revert Pool__NoPoolDepositsFound();
+            }
+
+            if (userDeposit.status != CoverLib.Status.Due) {
+                revert Pool__DepositNotActive();
+            }
+
+            if (block.timestamp < userDeposit.expiryDate) {
+                revert Pool__DepositPeriodStillActive();
+            }
+
+            (uint256 internalDeposit, uint256 externalDeposit) = registerWithdrawal(userDeposit, selectedPool);
+
+            totalInternalAmount += internalDeposit;
+            totalExternalAmount += externalDeposit;
         }
 
-        if (block.timestamp < userDeposit.expiryDate) {
-            revert Pool__DepositPeriodStillActive();
-        }
-
-        uint256 externalDeposit = (selectedPool.investmentArmPercent * userDeposit.amount) / 100;
-        uint256 internalDeposit = userDeposit.amount - externalDeposit;
-        s_deposits[depositor][_poolId][pdt].status = CoverLib.Status.Due;
-        s_pools[_poolId].tvl -= userDeposit.amount;
-        s_pools[_poolId].baseValue -= internalDeposit;
-        s_pools[_poolId].coverUnits = s_pools[_poolId].baseValue * selectedPool.leverage;
-
-        CoverLib.Cover[] memory poolCovers = getPoolCovers(_poolId);
-        uint256 poolCoverLength = poolCovers.length;
-        for (uint256 i = 0; i < poolCoverLength; i++) {
-            s_coverContract.updateMaxAmount(poolCovers[i].id);
-        }
+        IERC20(selectedPool.asset).transfer(userDeposit.lp, totalInternalAmount);
+        i_aavePool.withdraw(selectedPool.asset, totalExternalAmount, userDeposit.lp);
 
         emit Withdraw(depositor, userDeposit.amount, selectedPool.poolName);
     }
@@ -303,7 +275,25 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         emit ClaimPaid(user, pool.poolName, proposalParam.claimAmount);
     }
 
-    function addPoolCover(uint256 _poolId, CoverLib.Cover memory _cover) public onlyCover {
+    function registerVaultDeposits(
+        CoverLib.DepositParams[] calldata _deposits,
+        uint256[] calldata internalDepositAmounts
+    ) external nonReentrant onlyVault returns (uint256) {
+        if (_deposits.length != internalDepositAmounts.length) {
+            revert Vault__MismatchedDepositsAndAmounts();
+        }
+
+        uint256 totalDailyPayout = 0;
+
+        for (uint256 i = 0; i < _deposits.length; i++) {
+            uint256 dailyPayout = registerDeposit(_deposits[i], internalDepositAmounts[i]);
+            totalDailyPayout += dailyPayout;
+        }
+
+        return totalDailyPayout;
+    }
+
+    function addPoolCover(uint256 _poolId, CoverLib.Cover memory _cover) external onlyCover {
         s_poolToCovers[_poolId].push(_cover);
     }
 
@@ -536,6 +526,28 @@ contract InsurancePool is ReentrancyGuard, Ownable {
         s_coverContract.updateMaxAmount(_depositParam.poolId);
 
         return dailyPayout;
+    }
+
+    function registerWithdrawal(CoverLib.Deposits calldata userDeposit, CoverLib.Pool calldata selectedPool)
+        internal
+        nonReentrant
+        onlyVaultOrPool
+        returns (uint256, uint256)
+    {
+        uint256 externalDeposit = (selectedPool.investmentArmPercent * userDeposit.amount) / 100;
+        uint256 internalDeposit = userDeposit.amount - externalDeposit;
+        uint256 _poolId = pool.id;
+
+        s_deposits[msg.sender][_poolId][userDeposit.pdt].status = CoverLib.Status.Withdrawn;
+        s_pools[_poolId].tvl -= userDeposit.amount;
+        s_pools[_poolId].baseValue -= internalDeposit;
+        s_pools[_poolId].coverUnits = s_pools[_poolId].baseValue * selectedPool.leverage;
+        s_deposits[msg.sender][_poolId][CoverLib.DepositType.Normal].amount = 0;
+
+        CoverLib.Cover[] memory poolCovers = getPoolCovers(_poolId);
+        s_coverContract.updateMaxAmount(_poolId);
+
+        return (internalDeposit, externalDeposit);
     }
 
     modifier onlyGovernance() {
