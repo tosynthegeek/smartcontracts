@@ -21,8 +21,7 @@ interface IbqBTC {
 }
 
 interface ILP {
-    function withdrawUpdate(address depositor, uint256 _poolId, CoverLib.DepositType pdt) external;
-    function updateVaultWithdrawToDue(address user, uint256 vaultId, uint256 amount) external;
+    function vaultWithdrawUpdate(CoverLib.Deposits[] _deposits, CoverLib.Pool[] _pools) external;
 
     function getPool(uint256 _poolId) external view returns (CoverLib.Pool memory);
     function registerVaultDeposits(CoverLib.DepositParams[] calldata _depositParams, uint256[] internalDepositAmounts)
@@ -119,14 +118,8 @@ contract Vaults is ReentrancyGuard, Ownable {
         if (vault.asset == address(0)) revert Vault__InvalidAssetForDepositType();
         if (_amount <= 0) revert Vault__AmountTooLow();
 
-        uint256 externalDeposit = _amount * vault.investmentArm / 100;
-        uint256 internalDeposit = _amount - externalDeposit;
-
-        IERC20(vault.asset).transferFrom(msg.sender, i_poolContractAddress, internaDeposit);
-        try i_aavePool.supply(vault.asset, externalDepositAmount, msg.sender, s_referralCode) {}
-        catch {
-            revert Vault__AaveSupplyFailed();
-        }
+        uint256 externalDeposit = 0;
+        uint256 internalDeposit = 0;
 
         CoverLib.DepositParams[] memory depositParams = new CoverLib.DepositParams[](vault.pools.length);
         uint256[] memory internalDepositAmounts = new uint256[](vault.pools.length);
@@ -134,7 +127,8 @@ contract Vaults is ReentrancyGuard, Ownable {
             uint256 poolId = vault.pools[i].id;
             uint256 poolPercentage = vaultPercentageSplits[_vaultId][poolId];
             uint256 percentage_amount = (poolPercentage * _amount) / 100;
-            uint256 internal_deposit_percentage = (poolPercentage * internalDeposit) / 100;
+            uint256 poolExternalAmount = (vault.pools[i].investmentArmPercent * percentage_amount) / 100;
+            uint256 internal_deposit_percentage = percentage_amount - poolExternalAmount;
             CoverLib.DepositParams memory depositParam = CoverLib.DepositParams({
                 depositor: msg.sender,
                 poolId: poolId,
@@ -147,6 +141,15 @@ contract Vaults is ReentrancyGuard, Ownable {
 
             depositParams[i] = depositParam;
             internalDepositAmounts[i] = internal_deposit_percentage;
+
+            externalDeposit += poolExternalAmount;
+            internalDeposit += internal_deposit_percentage;
+        }
+
+        IERC20(vault.asset).transferFrom(msg.sender, i_poolContractAddress, internaDeposit);
+        try i_aavePool.supply(vault.asset, externalDepositAmount, msg.sender, s_referralCode) {}
+        catch {
+            revert Vault__AaveSupplyFailed();
         }
 
         uint256 totalDailyPayout = i_poolContract.registerVaultDeposits(depositParams, internalDepositAmounts);
@@ -171,8 +174,8 @@ contract Vaults is ReentrancyGuard, Ownable {
         emit Deposited(msg.sender, _amount, vault.vaultName);
     }
 
-    function initialVaultWithdraw(uint256 _vaultId) public nonReentrant {
-        VaultDeposit storage userVaultDeposit = s_userVaultDeposits[msg.sender][_vaultId];
+    function vaultWithdraw(uint256 _vaultId) public nonReentrant {
+        VaultDeposit memory userVaultDeposit = s_userVaultDeposits[msg.sender][_vaultId];
         if (userVaultDeposit.amount == 0) revert Vault__NoDepositFound();
 
         if (userVaultDeposit.status != CoverLib.Status.Active) {
@@ -183,14 +186,27 @@ contract Vaults is ReentrancyGuard, Ownable {
             revert Vault__DepositPeriodStillActive();
         }
 
+        bqBTC.burn(msg.sender, userVaultDeposit.amount);
+        CoverLib.Deposits[] memory userDeposits = new CoverLib.Deposits[](vault.pools.length);
+
         Vault memory vault = s_vaults[_vaultId];
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
-            IPoolContract.withdrawUpdate(msg.sender, poolId, CoverLib.DepositType.Vault);
+            if (userDeposit[i].status != CoverLib.Status.Active) {
+                revert Vault__InactiveDeposit();
+            }
+
+            deposits[msg.sender][poolId][CoverLib.DepositType.Vault].status = CoverLib.Status.Due;
+            CoverLib.Deposits memory userDeposit = deposits[msg.sender][poolId][CoverLib.DepositType.Vault];
+            userDeposits[i] = userDeposit;
+            deposits[msg.sender][poolId][CoverLib.DepositType.Vault].amount = 0;
         }
 
         userVaultDeposit.status = CoverLib.Status.Due;
-        bqBTC.burn(msg.sender, userVaultDeposit.amount);
+        userVaultDeposit.amount = 0;
+        userVaultDeposit.daysLeft = 0;
+
+        i_poolContract.vaultWithdrawUpdate(userDeposits, vault.pools);
 
         emit Withdraw(msg.sender, userVaultDeposit.amount, vault.vaultName);
     }
@@ -203,7 +219,6 @@ contract Vaults is ReentrancyGuard, Ownable {
         return s_vaults[vaultId].pools;
     }
 
-    //  TODO: Adjust the length of the array to the number of pools in the vault
     function getUserVaultPoolDeposits(uint256 vaultId, address user) public view returns (CoverLib.Deposits[] memory) {
         Vault memory vault = s_vaults[vaultId];
         CoverLib.Deposits[] memory vaultDeposits = new CoverLib.Deposits[](vault.pools.length);
@@ -215,12 +230,24 @@ contract Vaults is ReentrancyGuard, Ownable {
         return vaultDeposits;
     }
 
-    function getUserVaultDeposit(uint256 vaultId, address user) public view returns (VaultDeposit memory) {
-        return s_userVaultDeposits[user][vaultId];
+    function getUserVaultDeposits(address user) public view returns (CoverLib.VaultDeposit[] memory) {
+        uint256 resultCount = 0;
+        for (uint256 i = 1; i <= vaultCount; i++) {
+            if (s_userVaultDeposits[user][i].amount > 0) {
+                resultCount++;
+            }
+        }
+
+        CoverLib.VaultDeposit[] memory userVaultDeposits = new CoverLib.VaultDeposit[](resultCount);
+        for (uint256 i = 1; i <= vaultCount; i++) {
+            userVaultDeposits[i - 1] = s_userVaultDeposits[user][i];
+        }
+
+        return userVaultDeposits;
     }
 
-    function setUserVaultDepositToZero(uint256 vaultId, address user) public nonReentrant onlyPoolCanister {
-        s_userVaultDeposits[user][vaultId].amount = 0;
+    function getUserVaultDeposit(uint256 vaultId, address user) public view returns (VaultDeposit memory) {
+        return s_userVaultDeposits[user][vaultId];
     }
 
     function getVaults() public view returns (Vault[] memory) {
