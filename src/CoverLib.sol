@@ -6,7 +6,7 @@ library CoverLib {
     struct Pool {
         uint256 id;
         string poolName;
-        CoverLib.RiskType riskType;
+        RiskType riskType;
         uint256 apy;
         uint256 minPeriod;
         uint256 totalUnitProcessed; // Total value that has been passed into the pool (both external and internal)
@@ -23,7 +23,7 @@ library CoverLib {
 
     struct PoolParams {
         uint256 poolId;
-        CoverLib.RiskType riskType;
+        RiskType riskType;
         string poolName;
         uint256 apy;
         uint256 minPeriod;
@@ -37,12 +37,12 @@ library CoverLib {
         uint256 amount;
         uint256 poolId;
         uint256 dailyPayout;
-        CoverLib.Status status;
+        Status status;
         uint256 daysLeft;
         uint256 startDate;
         uint256 expiryDate;
         uint256 accruedPayout;
-        CoverLib.DepositType pdt; // Vault deposit or normal pool deposit?
+        DepositType pdt; // Vault deposit or normal pool deposit?
     }
 
     struct DepositParams {
@@ -50,7 +50,7 @@ library CoverLib {
         uint256 poolId;
         uint256 amount;
         uint256 period;
-        CoverLib.DepositType pdt;
+        DepositType pdt;
         address asset;
     }
 
@@ -59,12 +59,12 @@ library CoverLib {
         uint256 amount;
         uint256 poolId;
         uint256 dailyPayout;
-        CoverLib.Status status;
+        Status status;
         uint256 daysLeft;
         uint256 startDate;
         uint256 expiryDate;
         uint256 accruedPayout;
-        CoverLib.DepositType pdt;
+        DepositType pdt;
         address asset; // Vault deposit or normal pool deposit?
     }
 
@@ -128,7 +128,7 @@ library CoverLib {
     // Governance
     struct ProposalParams {
         address user;
-        CoverLib.RiskType riskType;
+        RiskType riskType;
         uint256 coverId;
         string txHash;
         string description;
@@ -167,7 +167,7 @@ library CoverLib {
     struct Vault {
         uint256 id;
         string vaultName;
-        CoverLib.Pool[] pools;
+        Pool[] pools;
         uint256 minPeriod;
         uint8 investmentArmPercent;
         address asset;
@@ -179,7 +179,7 @@ library CoverLib {
         uint256 amount;
         uint256 vaultId;
         uint256 dailyPayout;
-        CoverLib.Status status;
+        Status status;
         uint256 daysLeft;
         uint256 startDate;
         uint256 expiryDate;
