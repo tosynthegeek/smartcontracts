@@ -28,7 +28,7 @@ library CoverLib {
         uint256 apy;
         uint256 minPeriod;
         uint8 leverage;
-        u8 investmentArm;
+        uint8 investmentArm;
         address asset;
     }
 
