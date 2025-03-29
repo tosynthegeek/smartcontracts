@@ -37,7 +37,7 @@ interface IGov {
 contract Vaults is ReentrancyGuard, Ownable {
     using CoverLib for *;
 
-    mapping(uint256 => Vault) s_vaults;
+    mapping(uint256 => CoverLib.Vault) s_vaults;
     mapping(uint256 => mapping(uint256 => uint256)) s_vaultPercentageSplits; //vault id to pool id to the pool percentage split;
     mapping(address => mapping(uint256 => mapping(CoverLib.DepositType => CoverLib.Deposits))) s_deposits;
     mapping(address => mapping(uint256 => CoverLib.VaultDeposit)) s_userVaultDeposits;
@@ -95,14 +95,14 @@ contract Vaults is ReentrancyGuard, Ownable {
         }
 
         s_vaultCount += 1;
-        Vault storage vault = s_vaults[vaultCount];
-        vault.id = vaultCount;
+        Vault storage vault = s_vaults[s_vaultCount];
+        vault.id = s_vaultCount;
         vault.vaultName = _vaultName;
         vault.investmentArm = _investmentArmPercent;
         vault.asset = asset;
         vault.isActive = true;
 
-        (uint256 percentageSplit, uint256 minPeriod) = validateAndSetPools(vault, _poolIds, poolPercentageSplit, adt);
+        (uint256 percentageSplit, uint256 minPeriod) = validateAndSetPools(vault, _poolIds, poolPercentageSplit);
 
         if (_minPeriod < minPeriod) revert Vault__InvalidMinPeriod();
 
@@ -125,7 +125,7 @@ contract Vaults is ReentrancyGuard, Ownable {
         uint256[] memory internalDepositAmounts = new uint256[](vault.pools.length);
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
-            uint256 poolPercentage = vaultPercentageSplits[_vaultId][poolId];
+            uint256 poolPercentage = s_vaultPercentageSplits[_vaultId][poolId];
             uint256 percentage_amount = (poolPercentage * _amount) / 100;
             uint256 poolExternalAmount = (vault.pools[i].investmentArmPercent * percentage_amount) / 100;
             uint256 internal_deposit_percentage = percentage_amount - poolExternalAmount;
@@ -135,7 +135,6 @@ contract Vaults is ReentrancyGuard, Ownable {
                 amount: percentage_amount,
                 period: _period,
                 pdt: CoverLib.DepositType.Vault,
-                adt: vault.assetType,
                 asset: vault.asset
             });
 
@@ -196,10 +195,10 @@ contract Vaults is ReentrancyGuard, Ownable {
                 revert Vault__InactiveDeposit();
             }
 
-            deposits[msg.sender][poolId][CoverLib.DepositType.Vault].status = CoverLib.Status.Due;
-            CoverLib.Deposits memory userDeposit = deposits[msg.sender][poolId][CoverLib.DepositType.Vault];
+            s_deposits[msg.sender][poolId][CoverLib.DepositType.Vault].status = CoverLib.Status.Due;
+            CoverLib.Deposits memory userDeposit = s_deposits[msg.sender][poolId][CoverLib.DepositType.Vault];
             userDeposits[i] = userDeposit;
-            deposits[msg.sender][poolId][CoverLib.DepositType.Vault].amount = 0;
+            s_deposits[msg.sender][poolId][CoverLib.DepositType.Vault].amount = 0;
         }
 
         userVaultDeposit.status = CoverLib.Status.Due;
@@ -224,7 +223,7 @@ contract Vaults is ReentrancyGuard, Ownable {
         CoverLib.Deposits[] memory vaultDeposits = new CoverLib.Deposits[](vault.pools.length);
         for (uint256 i = 0; i < vault.pools.length; i++) {
             uint256 poolId = vault.pools[i].id;
-            vaultDeposits[i] = deposits[user][poolId][CoverLib.DepositType.Vault];
+            vaultDeposits[i] = s_deposits[user][poolId][CoverLib.DepositType.Vault];
         }
 
         return vaultDeposits;
@@ -232,14 +231,14 @@ contract Vaults is ReentrancyGuard, Ownable {
 
     function getUserVaultDeposits(address user) public view returns (CoverLib.VaultDeposit[] memory) {
         uint256 resultCount = 0;
-        for (uint256 i = 1; i <= vaultCount; i++) {
+        for (uint256 i = 1; i <= s_vaultCount; i++) {
             if (s_userVaultDeposits[user][i].amount > 0) {
                 resultCount++;
             }
         }
 
         CoverLib.VaultDeposit[] memory userVaultDeposits = new CoverLib.VaultDeposit[](resultCount);
-        for (uint256 i = 1; i <= vaultCount; i++) {
+        for (uint256 i = 1; i <= s_vaultCount; i++) {
             userVaultDeposits[i - 1] = s_userVaultDeposits[user][i];
         }
 
@@ -251,8 +250,8 @@ contract Vaults is ReentrancyGuard, Ownable {
     }
 
     function getVaults() public view returns (Vault[] memory) {
-        Vault[] memory allVaults = new Vault[](vaultCount);
-        for (uint256 i = 1; i <= vaultCount; i++) {
+        Vault[] memory allVaults = new Vault[](s_vaultCount);
+        for (uint256 i = 1; i <= s_vaultCount; i++) {
             allVaults[i - 1] = s_vaults[i];
         }
 
@@ -268,50 +267,31 @@ contract Vaults is ReentrancyGuard, Ownable {
     }
 
     function setCover(address _coverContract) external onlyOwner {
-        if (coverContract != address(0)) revert Vault__CoverAlreadySet();
+        if (i_coverContractAddress != address(0)) revert Vault__CoverAlreadySet();
         if (_coverContract == address(0)) revert Vault__InvalidCoverAddress();
 
-        ICoverContract = ICover(_coverContract);
-        coverContract = _coverContract;
+        i_coverContract = ICover(_coverContract);
+        i_coverContractAddress = _coverContract;
     }
 
     function setPool(address _poolContract) external onlyOwner {
-        if (poolContract != address(0)) revert Vault__PoolAlreadySet();
+        if (i_poolContractAddress != address(0)) revert Vault__PoolAlreadySet();
         if (_poolContract == address(0)) revert Vault__InvalidPoolAddress();
 
-        IPoolContract = IPool(_poolContract);
-        poolContract = _poolContract;
+        i_poolContract = IPool(_poolContract);
+        i_poolContractAddress = _poolContract;
     }
 
-    function setPoolCanister(address _poolCanister) external onlyOwner {
-        if (poolCanister != address(0)) revert Vault__PoolCanisterAlreadySet();
-        if (_poolCanister == address(0)) {
-            revert Vault__InvalidPoolCanisterAddress();
-        }
-
-        poolCanister = _poolCanister;
-    }
-
-    function updatePoolCanister(address _poolCanister) external onlyOwner {
-        if (_poolCanister == address(0)) {
-            revert Vault__InvalidPoolCanisterAddress();
-        }
-        poolCanister = _poolCanister;
-    }
-
-    function validateAndSetPools(
-        Vault storage vault,
-        uint256[] memory _poolIds,
-        uint256[] memory poolPercentageSplit,
-        CoverLib.AssetDepositType adt
-    ) internal returns (uint256 percentageSplit, uint256 minPeriod) {
+    function validateAndSetPools(Vault storage vault, uint256[] memory _poolIds, uint256[] memory poolPercentageSplit)
+        internal
+        returns (uint256 percentageSplit, uint256 minPeriod)
+    {
         minPeriod = 365;
         for (uint256 i = 0; i < _poolIds.length; i++) {
-            CoverLib.Pool memory pool = IPoolContract.getPool(_poolIds[i]);
-            if (pool.assetType != adt) revert Vault__IncompatibleAssetType();
+            CoverLib.Pool memory pool = i_poolContract.getPool(_poolIds[i]);
 
             percentageSplit += poolPercentageSplit[i];
-            vaultPercentageSplits[vault.id][_poolIds[i]] = poolPercentageSplit[i];
+            s_vaultPercentageSplits[vault.id][_poolIds[i]] = poolPercentageSplit[i];
             vault.pools.push(pool);
             if (pool.minPeriod < minPeriod) {
                 minPeriod = pool.minPeriod;
