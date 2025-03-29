@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Deploy} from "../script/Deploy.s.sol";
+import {DeployScript} from "../script/Deploy.s.sol";
 import "../src/InsurancePool.sol" as InsurancePool;
 
 contract InsurancePoolTest is Test {
